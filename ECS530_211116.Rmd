@@ -41,7 +41,7 @@ needed <- c("ggplot2", "mapsf", "colorspace", "RColorBrewer", "classInt",
 
 ### Script
 
-Script and data at https://github.com/rsbivand/ECS530_21/raw/main/ECS530_21_II.zip. Download to suitable location, unzip and use as basis.
+Script and data at https://github.com/rsbivand/ECS530_h21/raw/main/ECS530_211116.zip. Download to suitable location, unzip and use as basis.
 
 
 
