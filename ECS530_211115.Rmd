@@ -1,0 +1,898 @@
+---
+title: "Spatial data analysis I"
+author: "Roger Bivand"
+date: "Monday 15 November 2021"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    toc_depth: 2
+theme: united
+bibliography: ecs530_21.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, paged.print=FALSE)
+```
+
+### Copyright
+
+All the material presented here, to the extent it is original, is available under [CC-BY-SA](https://creativecommons.org/licenses/by-sa/4.0/). 
+
+### Required current contributed CRAN packages:
+
+I am running R 4.1.2, with recent `update.packages()`.
+
+```{r, echo=TRUE}
+needed <- c("tidycensus", "rgdal", "RSQLite", "units", "gdistance", "igraph", 
+"stars", "abind", "raster", "terra", "sp", "mapview", "sf", "osmdata")
+```
+
+### Script
+
+Script and data at https://github.com/rsbivand/ECS530_21/raw/main/ECS530_21_I.zip. Download to suitable location, unzip and use as basis.
+
+
+
+# Spatial data
+
+Spatial data typically combine position data in 2D (or 3D), attribute data and metadata related to the position data. Much spatial data could be called map data or GIS data. We collect and handle much more position data since global navigation satellite systems (GNSS) like GPS came on stream 20 years ago, earth observation satellites have been providing data for longer.
+
+```{r, echo = TRUE}
+suppressPackageStartupMessages(library(osmdata))
+library(sf)
+```
+
+```{r, cache=TRUE, echo = TRUE}
+bbox <- opq(bbox = 'bergen norway')
+byb0 <- osmdata_sf(add_osm_feature(bbox, key = 'railway',
+  value = 'light_rail'))$osm_lines
+tram <- osmdata_sf(add_osm_feature(bbox, key = 'railway',
+  value = 'tram'))$osm_lines
+byb1 <- tram[!is.na(tram$name),]
+o <- intersect(names(byb0), names(byb1))
+byb <- rbind(byb0[,o], byb1[,o])
+saveRDS(byb, file="byb.rds")
+```
+
+Spatial vector data is based on points, from which other geometries are constructed. Vector data is often also termed object-based spatial data. The light rail tracks are 2D vector data. The points themselves are stored as double precision floating point numbers, typically without recorded measures of accuracy (GNSS provides a measure of accuracy). Here, lines are constructed from points.
+
+
+```{r, echo = TRUE}
+byb <- readRDS("byb.rds")
+library(mapview)
+mapviewOptions(fgb = FALSE)
+mapview(byb)
+```
+
+
+
+## Advancing from the **sp** representation
+
+### Representing spatial vector data in R (**sp**)
+
+
+The **sp** package was a child of its time, using S4 formal classes, and the best compromise we then had of positional representation (not arc-node, but hard to handle holes in polygons). If we coerce `byb` to the **sp** representation, we see the formal class structure. Input/output used OGR/GDAL vector drivers in the **rgdal** package, and topological operations used GEOS in the **rgeos** package.
+
+
+```{r, echo = TRUE}
+library(sp)
+byb_sp <- as(byb, "Spatial")
+str(byb_sp, max.level=2)
+```
+
+```{r, echo = TRUE}
+str(slot(byb_sp, "lines")[[1]])
+```
+
+```{r, echo = TRUE}
+library(terra)
+(byb_sv <- as(byb, "SpatVector"))
+str(byb_sv)
+```
+```{r, echo = TRUE}
+geomtype(byb_sv)
+str(geom(byb_sv))
+```
+
+### Raster data
+
+Spatial raster data is observed using rectangular (often square) cells, within which attribute data are observed. Raster data are very rarely object-based, very often they are field-based and could have been observed everywhere. We probably do not know where within the raster cell the observed value is correct; all we know is that at the chosen resolution, this is the value representing the whole cell area.
+
+```{r, echo = TRUE, eval=FALSE}
+library(elevatr)
+elevation <- get_elev_raster(byb_sp, z = 10)
+is.na(elevation) <- elevation < 1
+saveRDS(elevation, file="elevation.rds")
+```
+
+```{r, echo = TRUE}
+library(raster)
+(elevation <- readRDS("elevation.rds"))
+str(elevation, max.level=2)
+```
+
+```{r, echo=TRUE}
+str(slot(elevation, "data"))
+```
+
+```{r, echo=TRUE}
+str(as(elevation, "SpatialGridDataFrame"), max.level=2)
+```
+
+```{r, echo = TRUE, eval=TRUE, cache=TRUE}
+mapview(elevation, col=terrain.colors)
+```
+
+```{r, echo = TRUE}
+(elevation_sr <- as(elevation, "SpatRaster"))
+str(elevation_sr)
+```
+
+```{r, echo = TRUE}
+str(values(elevation_sr))
+```
+
+
+### Raster data
+
+The **raster** package complemented **sp** for handling raster objects and their interactions with vector objects. 
+
+It added to input/output using GDAL through **rgdal**, and better access to NetCDF files for GDAL built without the relevant drivers. 
+
+It may be mentioned in passing that thanks to help from CRAN administrators and especially Brian Ripley, CRAN binary builds of **rgdal** for Windows and Apple Mac OSX became available from 2006, but with a limited set of vector and raster drivers. 
+
+Support from CRAN adminstrators remains central to making packages available to users who are not able to install R source packages themselves, particularly linking to external libraries. 
+
+Initially, **raster** was written in R using functionalities in **sp** and **rgdal** with **rgeos** coming later. 
+
+It used a feature of GDAL raster drivers permitting the successive reading of subsets of rasters by row and column, permitting the processing of much larger objects than could be held in memory. 
+
+In addition, the concepts of bricks and stacks of rasters were introduced, diverging somewhat from the **sp** treatment of raster bands as stacked columns as vectors in a data frame.
+
+From this year, a new package called **terra** steps away from **sp** class representations, linking directly to GDAL, PROJ and GEOS.
+
+### Questions arose
+
+As **raster** evolved, two other packages emerged raising issues with the ways in which spatial objects had been conceptualized in **sp**. 
+
+The **rgeos** package used the C application programming interface (API) to the C++ GEOS library, which is itself a translation of the Java Topology Suite (JTS). 
+
+While the GDAL vector drivers did use the standard Simple Features representation of ector geometries, it was not strongly enforced. 
+
+This laxity now seems most closely associated with the use of ESRI Shapefiles as a de-facto file standard for representation, in which many Simple Features are not consistently representable. 
+
+### Need for vector standards compliance
+
+Both JTS and GEOS required a Simple Feature compliant representation, and led to the need for curious and fragile adaptations. 
+
+For example, these affected the representation of **sp** `"Polygons"` objects, which were originally conceptualized after the Shapefile specification: ring direction determined whether a ring was exterior or interior (a hole), but no guidance was given to show which exterior ring holes might belong to. 
+
+As R provides a way to add a character string comment to any object, comments were added to each `"Polygons"` object encoding the necessary information. 
+
+In this way, GEOS functionality could be used, but the fragility of vector representation in **sp** was made very obvious.
+
+### Spatio-temporal data
+
+Another package affecting thinking about representation was **spacetime**, as it diverged from **raster** by stacking vectors for regular spatio-temporal objects with space varying faster than time. 
+
+So a single earth observation band observed repeatedly would be stored in a single vector in a data frame, rather than in the arguably more robust form of a four-dimensional array, with the band taking one position on the final dimension. 
+
+The second edition of [@asdar2] took up all of these issues in one way or another, but after completing a spatial statistics special issue of the Journal of Statistical Software [@JSSv063i01], it was time to begin fresh implementations of classes for spatial data.
+
+### Data handling
+
+We can download monthly CSV files of [city bike](https://bergenbysykkel.no/en/open-data) use, and manipulate the input to let us use the **stplanr** package to aggregate origin-destination data. One destination is in Oslo, some are round trips, but otherwise things are OK. We can use [CycleStreets](www.cyclestreets.net) to route the volumes onto [OSM](https://www.openstreetmap.org/copyright) cycle paths, via an API and API key. We'd still need to aggregate the bike traffic by cycle path segment for completeness.
+
+```{r, echo = TRUE, eval=FALSE, cache=TRUE}
+bike_fls <- list.files("bbs")
+trips0 <- NULL
+for (fl in bike_fls) trips0 <- rbind(trips0,
+  read.csv(file.path("bbs", fl), header=TRUE))
+trips0 <- trips0[trips0[, 8] < 6 & trips0[, 13] < 6,]
+trips <- cbind(trips0[,c(1, 4, 2, 9)], data.frame(count=1))
+from <- unique(trips0[,c(4,5,7,8)])
+names(from) <- substring(names(from), 7)
+to <- unique(trips0[,c(9,10,12,13)])
+names(to) <- substring(names(to), 5)
+stations0 <- st_as_sf(merge(from, to, all=TRUE),
+  coords=c("station_longitude", "station_latitude"))
+stations <- aggregate(stations0, list(stations0$station_id),
+  head, n=1)
+suppressWarnings(stations <- st_cast(stations, "POINT"))
+st_crs(stations) <- 4326
+saveRDS(stations, file="stations.rds")
+od <- aggregate(trips[,-(1:4)], list(trips$start_station_id,
+  trips$end_station_id), sum)
+od <- od[-(which(od[,1] == od[,2])),]
+library(stplanr)
+od_lines <- od2line(flow=od, zones=stations, zone_code="Group.1",
+  origin_code="Group.1", dest_code="Group.2")
+saveRDS(od_lines, "od_lines.rds")
+Sys.setenv(CYCLESTREET="31e77ac1d59a7f4b") #XxXxXxXxXxXxXx
+od_routes <- line2route(od_lines, plan = "fastest")
+saveRDS(od_routes, "od_routes.rds")
+```
+
+Origin-destination lines
+
+```{r plot3, cache=TRUE, eval=TRUE}
+od_lines <- readRDS("od_lines.rds")
+stations <- readRDS("stations.rds")
+mapviewOptions(fgb = FALSE)
+mapview(od_lines, alpha=0.2, lwd=(od_lines$x/max(od_lines$x))*10) + mapview(stations)
+```
+
+Routed lines along cycle routes
+
+```{r plot4, cache=TRUE, eval=TRUE}
+od_routes <- readRDS("od_routes.rds")
+stations <- readRDS("stations.rds")
+mapviewOptions(fgb = FALSE)
+mapview(od_routes, alpha=0.2, lwd=(od_lines$x/max(od_lines$x))*10) + mapview(stations)
+```
+### Land use data
+
+[OpenLandMap](https://openlandmap.org/#/?base=OpenTopoMap&center=60.3733,5.2815&zoom=10&opacity=40&layer=lcv_land.cover_esacci.lc.l4_c&time=1992)
+
+## Simple Features in R
+
+
+It was clear that vector representations needed urgent attention, so the **sf** package was begun, aiming to implement the most frequently used parts of the specification [@iso19125; @kralidis08; @sfa]. 
+
+Development was supported by a grant from the then newly started R Consortium, which brings together R developers and industry members. 
+
+A key breakthrough came at the useR! 2016 conference, following an earlier decision to re-base vector objects on data frames, rather than as in **sp** to embed a data frame inside a collection of spatial features of the same kind. 
+
+However, although data frame objects in S and R have always been able to take list columns as valid columns, such list columns were not seen as "tidy" [@JSSv059i10].
+
+### Refresher: data frame objects
+
+First, let us see that is behind the `data.frame` object: the `list` object. `list` objects are vectors that contain other objects, which can be addressed by name or by 1-based indices . Like the vectors we have already met, lists can be  accessed and manipulated using square brackets `[]`. Single list elements can be accessed and manipulated using double square brackets `[[]]`
+
+Starting with four vectors of differing types, we can assemble a list object; as we see, its structure is quite simple. The vectors in the list may vary in length, and lists can (and do often) include lists
+
+
+```{r , echo = TRUE}
+V1 <- 1:3
+V2 <- letters[1:3]
+V3 <- sqrt(V1)
+V4 <- sqrt(as.complex(-V1))
+L <- list(v1=V1, v2=V2, v3=V3, v4=V4)
+```
+
+
+
+```{r , echo = TRUE}
+str(L)
+L$v3[2]
+L[[3]][2]
+```
+
+Our `list` object contains four vectors of different types but of the same length; conversion to a `data.frame` is convenient. Note that by default strings are converted into factors:
+
+
+```{r , echo = TRUE}
+DF <- as.data.frame(L)
+str(DF)
+DF <- as.data.frame(L, stringsAsFactors=FALSE)
+str(DF)
+```
+
+
+We can also provoke an error in conversion from a valid `list` made up of vectors of different length to a `data.frame`:
+
+
+```{r , echo = TRUE}
+V2a <- letters[1:4]
+V4a <- factor(V2a)
+La <- list(v1=V1, v2=V2a, v3=V3, v4=V4a)
+DFa <- try(as.data.frame(La, stringsAsFactors=FALSE), silent=TRUE)
+message(DFa)
+```
+
+
+We can access `data.frame` elements as `list` elements, where the `$` is effectively the same as `[[]]` with the list component name as a string:
+
+
+```{r , echo = TRUE}
+DF$v3[2]
+DF[[3]][2]
+DF[["v3"]][2]
+```
+
+
+Since a `data.frame` is a rectangular object with named columns with equal numbers of rows, it can also be indexed like a matrix, where the rows are the first index and the columns (variables) the second:
+
+
+```{r , echo = TRUE}
+DF[2, 3]
+DF[2, "v3"]
+str(DF[2, 3])
+str(DF[2, 3, drop=FALSE])
+```
+
+
+If we coerce a `data.frame` containing a character vector or factor into a matrix, we get a character matrix; if we extract an integer and a numeric column, we get a numeric matrix.
+
+
+```{r , echo = TRUE}
+as.matrix(DF)
+as.matrix(DF[,c(1,3)])
+```
+
+The fact that `data.frame` objects descend from `list` objects is shown by looking at their lengths; the length of a matrix is not its number of columns, but its element count:
+
+
+```{r , echo = TRUE}
+length(L)
+length(DF)
+length(as.matrix(DF))
+```
+
+
+There are `dim` methods for `data.frame` objects and matrices (and arrays with more than two dimensions); matrices and arrays are seen as vectors with dimensions; `list` objects have no dimensions:
+
+
+```{r , echo = TRUE}
+dim(L)
+dim(DF)
+dim(as.matrix(DF))
+```
+
+
+```{r , echo = TRUE}
+str(as.matrix(DF))
+```
+
+
+
+`data.frame` objects have `names` and `row.names`, matrices have `dimnames`, `colnames` and `rownames`; all can be used for setting new values:
+
+
+```{r , echo = TRUE}
+row.names(DF)
+names(DF)
+names(DF) <- LETTERS[1:4]
+names(DF)
+str(dimnames(as.matrix(DF)))
+```
+
+
+R objects have attributes that are not normally displayed, but which show their structure and class (if any); we can see that `data.frame` objects are quite different internally from matrices:
+
+
+```{r , echo = TRUE}
+str(attributes(DF))
+str(attributes(as.matrix(DF)))
+```
+
+
+If the reason for different vector lengths was that one or more observations are missing on that variable, `NA` should be used; the lengths are then equal, and a rectangular table can be created:
+
+
+```{r , echo = TRUE}
+V1a <- c(V1, NA)
+V3a <- sqrt(V1a)
+La <- list(v1=V1a, v2=V2a, v3=V3a, v4=V4a)
+DFa <- as.data.frame(La, stringsAsFactors=FALSE)
+str(DFa)
+```
+
+
+### Tidy list columns
+
+
+```{r, echo = TRUE} 
+DF$E <- list(d=1, e="1", f=TRUE)
+str(DF)
+```
+
+At useR! in 2016, list columns were declared "tidy", using examples including the difficulty of encoding polygon interior rings in non-list columns. The decision to accommodate "tidy" workflows as well as base-R workflows had already been made, as at least some users only know how to use ``tidy'' workflows. 
+
+
+
+### **sf** begins
+
+[@RJ-2018-009] shows the status of the **sf** towards the end of 2017, with a geometry list column containing R wrappers around objects adhering to Simple Features specification definitions. The feature geometries are stored in numeric vectors, matrices, or lists of matrices, and may also be subject to arithmetic operations. Features are held in the `"XY"` class if two-dimensional, or `"XYZ"`, `"XYM"` or `"XYZM"` if such coordinates are available; all single features are `"sfg"` (Simple Feature geometry) objects: 
+
+```{r, echo = TRUE} 
+pt1 <- st_point(c(1,3))
+pt2 <- pt1 + 1
+pt3 <- pt2 + 1
+str(pt3)
+```
+
+Geometries may be represented as "Well Known Text" (WKT):
+
+
+```{r, echo = TRUE} 
+st_as_text(pt3)
+```
+
+or as "Well Known Binary" (WKB) as in databases' "binary large objects" (BLOBs), resolving the problem of representation when working with GDAL vector drivers and functions, and with GEOS predicates and topological operations:
+
+
+```{r, echo = TRUE} 
+st_as_binary(pt3)
+```
+
+A column of simple feature geometries (`"sfc"`) is constructed as a list of `"sfg"` objects, which do not have to belong to the same Simple Features category: 
+
+```{r, echo = TRUE} 
+pt_sfc <- st_as_sfc(list(pt1, pt2, pt3))
+str(pt_sfc)
+```
+
+Finally, an `"sfc"` object, a geometry column, can be added to a `data.frame` object using `st_geometry()`, which sets a number of attributes on the object and defines it as also being an `"sf"` object (the `"agg"` attribute if populated shows how observations on non-geometry columns should be understood):
+
+```{r, echo = TRUE} 
+st_geometry(DF) <- pt_sfc
+(DF)
+```
+
+The **sf** package does not implement all of the Simple Features geometry categories, but geometries may be converted to the chosen subset, using for example the `gdal_utils()` function with `util="ogr2ogr", options="-nlt CONVERT_TO_LINEAR"` to convert curve geometries in an input file to linear geometries. 
+
+Many of the functions in the **sf** package begin with `st_` as a reference to the same usage in PostGIS, where the letters were intended to symbolise space and time, but where time has not yet been implemented.
+
+**sf** also integrates GEOS topological predicates and operations into the same framework, replacing the **rgeos** package for access to GEOS functionality. The precision and scale defaults differ between **sf** and **rgeos** slightly; both remain fragile with respect to invalid geometries, of which there are many in circulation.
+\endcol
+
+\begincol{0.48\textwidth}
+```{r, echo = TRUE} 
+(buf_DF <- st_buffer(DF, dist=0.3))
+```
+\endcol
+\endcols
+
+
+
+## Raster representations: **stars**
+
+Like **sf**, **stars** was supported by an R Consortium grant, for scalable, spatio-temporal tidy arrays for R. 
+
+Spatio-temporal arrays were seen as an alternative way of representing multivariate spatio-temporal data from the choices made in the **spacetime** package, where a two-dimensional data frame contained stacked positions within stacked time points or intervals. 
+
+The proposed arrays might collapse to a raster layer if only one variable was chosen for one time point or interval. 
+
+More important, the development of the package was extended to accommodate a backend for earth data processing in which the data are retrieved and rescaled as needed from servers, most often cloud-based servers.
+
+
+This example only covers a multivariate raster taken from a Landsat 7 view of a small part of the Brazilian coast. In the first part, a GeoTIFF file is read into memory, using three array dimensions, two in planar space, the third across six bands:
+
+```{r, echo = TRUE} 
+library(stars)
+fn <- system.file("tif/L7_ETMs.tif", package = "stars")
+L7 <- read_stars(fn)
+L7
+```
+
+```{r, echo = TRUE} 
+(L7_R <- as(L7, "Raster"))
+(as(L7_R, "SpatRaster"))
+```
+
+The bands can be operated on arithmetically, for example to generate a new object containing values of the normalized difference vegetation index through a function applied across the $x$ and $y$ spatial dimensions:
+
+```{r, echo = TRUE} 
+ndvi <- function(x) (x[4] - x[3])/(x[4] + x[3])
+(s2.ndvi <- st_apply(L7, c("x", "y"), ndvi))
+```
+
+The same file can also be accessed using the proxy mechanism, shich creates a link to the external entity, here a file:
+
+```{r, echo = TRUE} 
+L7p <- read_stars(fn, proxy=TRUE)
+L7p
+```
+
+The same function can also be applied across the same two spatial dimentions of the array, but no calculation is carried out until the data is needed and the output resolution known:
+
+```{r, echo = TRUE} 
+(L7p.ndvi = st_apply(L7p, c("x", "y"), ndvi))
+```
+
+The array object can also be split, here on the band dimension, to yield a representation as six rasters in list form:
+
+```{r, echo = TRUE} 
+(x6 <- split(L7, "band"))
+```
+
+
+These rasters may also be subjected to arithmetical operations, and as may be seen, explicit arithmetic on the six rasters has the same outcome as applying the same calculatiob to the three-dimensional array:
+
+```{r, echo = TRUE} 
+x6$mean <- (x6[[1]] + x6[[2]] + x6[[3]] + x6[[4]] + x6[[5]] +
+              x6[[6]])/6
+xm <- st_apply(L7, c("x", "y"), mean)
+all.equal(xm[[1]], x6$mean)
+```
+
+
+### openeo
+
+[OpenEO](http://openeo.org/about/) proposes proof-of-concept client-server API approaches. The project is under development.
+
+
+### gdalcubes 
+
+Earth Observation Data Cubes from Satellite Image Collections - extension of the **stars** proxy mechansim and the **raster** out-of-memory approach: (https://github.com/appelmar/gdalcubes_R).
+
+Processing collections of Earth observation images as on-demand multispectral, multitemporal data cubes. Users define cubes by spatiotemporal extent, resolution, and spatial reference system and let 'gdalcubes' automatically apply cropping, reprojection, and resampling using the 'Geospatial Data Abstraction Library' ('GDAL'). 
+
+Implemented functions on data cubes include reduction over space and time, applying arithmetic expressions on pixel band values, moving window aggregates over time, filtering by space, time, bands, and predicates on pixel values, materializing data cubes as 'netCDF' files, and plotting. User-defined 'R' functions can be applied over chunks of data cubes. The package implements lazy evaluation and multithreading. See also [this blog post](https://www.r-spatial.org//r/2019/07/18/gdalcubes1.html).
+
+
+# Support
+
+*Support* expressses the relationship between the spatial and temporal entities of observation used for capturing underlying data generation processes, and those processes themselves. 
+
+The processes and their associated spatial and temporal scales ("footprints") and strides may not be well-understood, so the ways that we conduct observations may or may not give use good "handles" on the underlying realities. 
+
+Since we are most often interested in drawing conclusions about the underlying realities, we should try to be aware of issues raised when we mix things up, the ecological fallacy being a typical example [@wakefield+lyons10], involving the drawing of conclusions about individuals from aggregates.
+
+Change of support occurs when the observational entities we are using differ in their spatial and/or temporal footprint, and we need to impute or interpolate from one support to another [@gotway+young:02]. Areal interpolation is one of the pathways  [@thomas15]. 
+
+Often we are not clear about the aggregation status of variables that we observe by entity either. In many entities, we are dealing with count aggregates. Say we have an accident count on a road segment, it is clear that if we subset the segment, we would need to impute the count to the subsegments that we have chosen. The variable is an aggregate, and subsetting should preserve the sum over all subsets rule.
+
+```{r}
+byb <- readRDS("byb.rds")
+names(attributes(byb))
+```
+
+```{r}
+library(sf)
+st_agr(byb)
+```
+  
+Work by [@stasch2014; @scheider2016] has shown that misunderstandings about whether variable values are constant over a segment (we really want the `gauge` to be constant), whether they are identities (`osm_id`), or whether they are measured over the whole observed time period at the point, line segment, polygon, or raster cell by counting or other aggregation, are quite prevalent. 
+
+All `"sf"` objects have an `"agr"` attribute, set by default to unknown (`NA`) for each non-geometry column in the data frame. In this case the information is of very poor quality (many missing values, others guessed), but use can be made of the facility in other datasets.
+
+```{r}
+byb$length <- st_length(byb)
+summary(byb$length)
+```
+
+```{r}
+str(byb$length)
+```
+
+Unfortunately, the simple examples given in SDSR do not work. The introduction of units, shown here and in [@RJ-2016-061] also do not (yet) provide the background for issuing warnings with regard to support that were anticipated when the ideas were first considered. The idea underlying `st_agr()` has been to warn when an aggregate variable is copied across to a part of an entity as though it was a constant.
+
+
+# GEOS, topology operations
+
+(precision in **sf**, scale in **rgeos**)
+
+
+### Broad Street Cholera Data
+
+```{r echo=FALSE}
+knitr::include_graphics('snowmap.png')
+```
+
+Even though we know that John Snow already had a working
+hypothesis about cholera epidemics, his data remain interesting,
+especially if we use a GIS to find the street distances from
+mortality dwellings to the Broad Street pump in Soho in central
+London. Brody et al. [-@brodyetal:00] point out that John Snow did not use
+maps to *find* the Broad Street pump, the polluted water source
+behind the 1854 cholera epidemic, because he associated cholera
+with water contaminated with sewage, based on earlier experience.
+
+The basic data to be used here were made available by Jim Detwiler, who had collated them for David O'Sullivan for use on the cover of O'Sullivan and Unwin [-@osullivan+unwin:03], based on earlier work by Waldo Tobler and others. The files were a shapefile of counts of deaths at front doors of houses, two shapefiles of pump locations and a georeferenced copy of the Snow map as an image; the files were registered in the British National Grid CRS. These have been converted to GPKG format. In GRASS, a suitable location was set up in this CRS and the image file was imported; the building contours were then digitised as a vector layer and cleaned.
+
+
+```{r echo=FALSE}
+knitr::include_graphics('brodyetal00_fig1.png')
+```
+
+We would like to find the line of equal distances shown on the extract from John Snow's map shown in Brody et al. [-@brodyetal:00] shown here, or equivalently find the distances from the pumps to the front doors of houses with mortalities following the roads, not the straight line distance. We should recall that we only have the locations of counts of mortalities, not of people at risk or of survivors.
+
+
+```{r, echo=TRUE}
+library(sf)
+bbo <- st_read("snow/bbo.gpkg")
+```
+
+```{r, echo=TRUE, warning=FALSE}
+buildings <- st_read("snow/buildings.gpkg", quiet=TRUE)
+deaths <- st_read("snow/deaths.gpkg", quiet=TRUE)
+sum(deaths$Num_Css)
+b_pump <- st_read("snow/b_pump.gpkg", quiet=TRUE)
+nb_pump <- st_read("snow/nb_pump.gpkg", quiet=TRUE)
+```
+
+
+As there is a small difference between the CRS values, we copy across before conducting an intersection operation to clip the buildings to the boundary, then we buffer in the buildings object (to make the roads broader).
+
+```{r, echo=TRUE, warning=FALSE}
+library(sf)
+st_crs(buildings) <- st_crs(bbo)
+buildings1 <- st_intersection(buildings, bbo)
+buildings2 <- st_buffer(buildings1, dist=-4)
+```
+
+```{r, echo=TRUE, warning=FALSE}
+plot(st_geometry(buildings2))
+```
+
+Next we create a dummy raster using **raster** with 1 meter resolution in the extent of the buildings object (note that `raster::extent()` works with **sf** objects, but the CRS must be given as a string):
+
+```{r, echo=TRUE}
+library(raster)
+resolution <- 1
+r <- raster(extent(buildings2), resolution=resolution, crs=st_crs(bbo)$proj4string)
+r[] <- resolution
+summary(r)
+```
+
+One of the `building3` component geometries was empty (permitted in **sf**, not in **sp**), so should be dropped before running `raster::cellFromPolygon()` to list raster cells in each geometry (so we need `unlist()` to assign `NA` to the in-buffered buildings):
+
+```{r, echo=TRUE, cache=TRUE, warning=FALSE}
+buildings3 <- as(buildings2[!st_is_empty(buildings2),], "Spatial")
+cfp <- cellFromPolygon(r, buildings3)
+is.na(r[]) <- unlist(cfp)
+summary(r)
+```
+
+```{r, echo=TRUE, warning=FALSE}
+plot(r)
+```
+
+Using **gdistance**, we create a symmetric transition object with an internal sparse matrix representation, from which shortest paths can be computed:
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(gdistance)
+```
+
+```{r, echo=TRUE, cache=TRUE}
+tr1 <- transition(r, transitionFunction=function(x) 1/mean(x), directions=8, symm=TRUE)
+```
+
+We need to find shortest paths from addresses with mortalities to the Broad Street pump first:
+
+```{r, echo=TRUE, cache=TRUE, warning=FALSE}
+sp_deaths <- as(deaths, "Spatial")
+d_b_pump <- st_length(st_as_sfc(shortestPath(tr1, as(b_pump, "Spatial"), sp_deaths, output="SpatialLines")))
+```
+
+and then in a loop from the same addresses to each of the other pumps in turn, finally taking the minimum:
+
+```{r, echo=TRUE, cache=TRUE, warning=FALSE}
+res <- matrix(NA, ncol=nrow(nb_pump), nrow=nrow(deaths))
+sp_nb_pump <- as(nb_pump, "Spatial")
+for (i in 1:nrow(nb_pump)) res[,i] <- st_length(st_as_sfc(shortestPath(tr1, sp_nb_pump[i,], sp_deaths, output="SpatialLines")))
+d_nb_pump <- apply(res, 1, min)
+```
+
+Because `sf::st_length()` uses **units** units, but they get lost in assigning to a matrix, we need to re-assign before testing whether the Broad Street pump is closer or not:
+
+```{r, echo=TRUE}
+library(units)
+units(d_nb_pump) <- "m"
+deaths$b_nearer <- d_b_pump < d_nb_pump
+by(deaths$Num_Css, deaths$b_nearer, sum)
+```
+
+# Input/output
+
+```{r}
+sf_extSoftVersion()
+```
+
+
+![](sf_deps.png)
+
+While **sp** handed off dependencies to interfaces to external software GEOS (**rgeos**) and GDAL+PROJ (**rgdal**), **sf** includes all the external dependencies itself. This also means that **stars** needs **sf** to provide raster drivers (some other packages like **gdalcubes** themselves link to GDAL).
+
+```{r}
+sort(as.character(st_drivers("vector")$name))
+```
+
+The drivers provided by GDAL can (mostly) read from data formatted as described for the drivers, and can to a lesser extent write data out. Raster access can use spatial subsets of the data extent, something that is harder to do with vector. Proxy handling is similarly largely restricted to raster drivers.
+
+```{r}
+sort(as.character(st_drivers("raster")$name))
+```
+
+There are clear preferences among data providers and users for particular data formats, so some drivers get more exposure than others. For vector data, many still use `"ESRI SShapefile"`, although its geometries are not SF-compliant, and data on features are stored in variant DBF files (text tiles, numerically imprecise, field name length restrictions, encoding issues). `"geojson"` and `"GML"` are text files with numeric imprecision in coordinates as well as data fields. Among vector drivers, `"GPKG"` is a viable standard and should be used as far as possible.
+
+```{r}
+library(RSQLite)
+db = dbConnect(SQLite(), dbname="snow/b_pump.gpkg")
+dbListTables(db)
+```
+
+
+```{r}
+str(dbReadTable(db, "gpkg_geometry_columns"))
+```
+
+
+```{r}
+str(dbReadTable(db, "b_pump")$geom)
+```
+
+
+
+```{r}
+dbDisconnect(db)
+```
+
+```{r}
+str(st_layers("snow/b_pump.gpkg"))
+```
+
+
+```{r}
+st_layers("snow/nb_pump.gpkg")
+```
+
+```{r}
+library(rgdal)
+ogrInfo("snow/nb_pump.gpkg")
+```
+
+```{r}
+rgdal::GDALinfo(system.file("tif/L7_ETMs.tif", package = "stars"))
+```
+
+
+```{r}
+obj <- GDAL.open(system.file("tif/L7_ETMs.tif", package = "stars"))
+```
+
+
+```{r}
+dim(obj)
+```
+
+```{r}
+getDriverLongName(getDriver(obj))
+```
+
+```{r}
+image(getRasterData(obj, band=1, offset=c(100, 100), region.dim=c(200, 200)))
+```
+
+
+
+```{r}
+GDAL.close(obj)
+```
+
+
+All of these facilities are taken from GDAL; the raster facilities have been extant for many years. **raster** used the ease of subsetting to permit large rasters to be handled out-of-memory.
+
+Summary: `sf::st_read()` and `rgdal::readOGR()` are equivalent, as are `sf::st_write()` and `rgdal::writeOGR()`. When writing, you may need to take steps if overwriting. `rgdal::readGDAL()` reads the raster data (sub)set into an **sp** object, `stars::read_stars()` reads into a possibly proxy **stars** object, and **raster** can also be used:
+
+```{r}
+library(raster)
+(obj <- raster(system.file("tif/L7_ETMs.tif", package = "stars")))
+```
+
+Output: `rgdal::writeGDAL()`, `stars::write_stars()` or `raster::writeRaster()` may be used for writing, but what happens depends on details, such as storage formats. Unlike vector, most often storage formats will be taken as homogeneous by type.
+
+### Tiled representations
+
+While interactive web mapping interfaces use raster or vector tiled backgrounds, we have not (yet) approached tiles or pyramids internally.
+
+
+### APIs
+
+# Accessing spatial data
+
+I'll use a large data set downloaded using the US Census API and the **tidycensus** package here to replicate @10.1007/s13524-016-0499-1, supplemented by numerous other data sets. The article examines the problem of large coefficients of variation (CV) in estimates for Census tracts in the sample-based American Community Survey (ACS):
+
+```{r, eval=TRUE}
+library(sf)
+library(tidycensus)
+options(tigris_use_cache=TRUE)
+```
+
+To run the download script, an API key is required:
+
+```{r, eval=FALSE}
+census_api_key("MY_KEY")
+```
+
+We make a vector of state FIPS letter codes, omitting Alaska and Hawaii, selecting by index number, not FIPS state codes, which would have meant dropping `"02"` and `"15"` from `"01"` to `"56"`:
+
+```{r, eval=TRUE}
+(us <- unique(fips_codes$state)[c(1, 3:11, 13:51)])
+```
+For each download step we use `lapply()` to apply a function to each element of the state FIPS vector in turn; first we download the tract geometries by state, with the ACS population total. The returned results are in the `mp` list, which we join by rows (`rbind()`) to create an `"sf"` object for 2010 boundaries.
+
+```{r, eval=FALSE}
+f <- function(x) {
+  get_acs(geography="tract", variables=c(tot_pop="B01003_001"), year=2010,
+          state=x, geometry=TRUE)
+}
+mp <- lapply(us, f)
+map10 <- do.call("rbind", mp)
+```
+
+We also download the tract median incomes and their "margins of error" (MOE) in the same way, creating an output `"data.frame"` object of 2010 values:
+
+```{r, eval=FALSE}
+f <- function(x) {
+  get_acs(geography="tract", variables=c(median_income="B19013_001"), year=2010, state=x)
+}
+mp <- lapply(us, f)
+med_inc_acs10 <- do.call("rbind", mp)
+```
+
+Finally we download 2010 Census results by tract by state and create another `"data.frame"` object:
+
+```{r, eval=FALSE}
+f <- function(x) {
+  get_decennial(geography="tract", variables=c(tot_pop="P001001", tot_hu="H001001", vacant="H003003", group_pop="P042001", black_tot="P008004", hisp_tot="P004003", m70_74="P012022", m75_79="P012023", m80_84="P012024", m85p="P012025", f70_74="P012046", f75_79="P012047", f80_84="P012048", f85p="P012049"), year=2010, state=x, output="wide")
+}
+mp <- lapply(us, f)
+cen10 <- do.call("rbind", mp)
+```
+
+We have now downloaded the data, and can merge the `"sf"` object with the first `"data.frame"` object, keying by `"GEOID"`, the tract FIPS code. We subset the columns and rename those retained:
+
+```{r, eval=FALSE}
+df <- merge(map10, med_inc_acs10, by="GEOID")
+df1 <- df[,-c(2, 3, 6, 7)]
+names(df1) <- c("GEOID", "tot_pop_acs", "tot_pop_moe", "med_inc_acs", "med_inc_moe", "geometry")
+names(attr(df1, "agr")) <- names(df1)[-6]
+```
+
+Next we merge that `"sf"` object with the Census `"data.frame"` object, again keying on `"GEOID"`, the tract FIPS code. In the article, only tracts larger than 500 in population and with more than 200 households were retained; in addition, tracts with missing median income MOE values were dropped:
+
+```{r, eval=FALSE}
+df_tracts_a <- merge(df1, cen10, by="GEOID")
+df_tracts <- df_tracts_a[df_tracts_a$tot_pop > 500 & df_tracts_a$tot_hu > 200,]
+df_tracts <- df_tracts[!is.na(df_tracts$med_inc_moe),]
+```
+
+Next we convert the MOE values back to the coefficient of variation (CV) for the two ACS variables used:
+
+```{r, eval=FALSE}
+df_tracts$tot_pop_cv <- (df_tracts$tot_pop_moe/1.645)/df_tracts$tot_pop_acs
+df_tracts$med_inc_cv <- (df_tracts$med_inc_moe/1.645)/df_tracts$med_inc_acs
+```
+
+and create rates variables:
+
+```{r, eval=FALSE}
+df_tracts$old_rate <- sum(as.data.frame(df_tracts)[,13:20])/df_tracts$tot_pop
+df_tracts$black_rate <- df_tracts$black_tot/df_tracts$tot_pop
+df_tracts$hisp_rate <- df_tracts$hisp_tot/df_tracts$tot_pop
+df_tracts$vacancy_rate <- df_tracts$vacant/df_tracts$tot_hu
+```
+
+Concluding, we use **s2** to calculate spherical areas , represented as acres, and add a population density variable (ACS inhabitants per acre), before saving the `"sf"` object as a GeoPackage file:
+
+```{r, eval=FALSE}
+library(s2)
+df_tracts$area <- NISTunits::NISTsqrMeterTOacre(st_area(df_tracts))
+df_tracts$dens <- df_tracts$tot_pop/df_tracts$area
+st_write(df_tracts, "df_tracts.gpkg", append=FALSE)
+``` 
+
+### Curves and problems
+
+A Norwegian problem, GML (and others) using curved geometries, and including the sea and other water bodies in administrative areas:
+
+```{r, eval=TRUE}
+library(sf)
+st_layers("Basisdata_0000_Norge_4258_Grunnkretser_GML.gml")
+gdal_utils("vectortranslate", "Basisdata_0000_Norge_4258_Grunnkretser_GML.gml", "Basisdata_0000_Norge_4258_Grunnkretser_GML.gpkg", options=c("-f", "GPKG", "-nlt", "CONVERT_TO_LINEAR", "-overwrite"))
+st_layers("Basisdata_0000_Norge_4258_Grunnkretser_GML.gpkg")
+gk <- st_read("Basisdata_0000_Norge_4258_Grunnkretser_GML.gpkg", "Grunnkrets")
+``` 
+
+
+### R's `sessionInfo()`
+
+```{r sI, echo = TRUE}
+sessionInfo()
+```

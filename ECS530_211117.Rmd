@@ -1,0 +1,991 @@
+---
+title: "ECS530: Spatial Data Analysis III"
+author: "Roger Bivand"
+date: "Wednesday 17 November 2021"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    toc_depth: 2
+theme: united
+bibliography: ecs530_21.bib
+link-citations: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Copyright
+
+All the material presented here, to the extent it is original, is available under [CC-BY-SA](https://creativecommons.org/licenses/by-sa/4.0/). Parts build on joint tutorials with Edzer Pebesma.
+
+### Required current contributed CRAN packages:
+
+I am running R 4.1.2, with recent `update.packages()`.
+
+```{r, echo=TRUE}
+needed <- c("rgeoda", "digest", "igraph", "tmap", "spdep", "spData", "sp", "gstat",
+"spatstat.linnet", "spatstat.core", "spatstat.geom", "spatstat.data_2.1-0")
+```
+
+### Script
+
+Script and data at https://github.com/rsbivand/ECS530_h21/raw/main/ECS530_211117.zip. Download to suitable location, unzip and use as basis.
+
+
+# Is spatial autocorrelation just poor data collection design and/or model mis-specification?
+
+- Spatial, time series, and spatio-temporal data breaks the fundamental rule of independence of observations (social networks do too)
+
+- Often, we are not sampling from a known population to get observations, so caution is needed for inference
+
+- Often again, the observation units or entities are not chosen by us, but by others
+
+- Designing spatial samples has become a less important part of the field than previously [@ripley:81; @mueller:07]
+
+### Spatial modelling: why?
+
+- If we want to detect and classify patterns (ML), infer about covariates, or interpolate from a fitted model, we need models that take account of the possible interdependency of spatial, time series and spatio-temporal observations
+
+- Here we are focussing on the spatial case; time differs in having a direction of flow, and spatio-temporal processes are necessarily more complex, especially when non-separable
+
+- We will not look at machine learning issues, although the partition into training and test sets raises important spatial questions for tuning [@SCHRATZ2019109]
+
+### Spatial modelling: which kinds?
+
+- Spatial point processes are most closely tied to the relative positions of the observations, but may accommodate inhomogeneities
+
+- Geostatistics is concerned with interpolating values of a variable of interest at unobserved locations, and the relative positions of the observations contribute through the modelling a function of differences in observed values of that variable between observations at increasing distances from each other
+
+- Disease mapping, spatial econometrics/regression and the application of generalized linear mixed models (GLMM, GAMM) in for example ecology are more interested in inferences about the spatial processes in play and the included covariates; some approaches may use distance based spatial correlation functions, others use graph or lattice neighbourhoods
+
+### When is a "spatial" process actually induced by the analyst
+
+- Sometimes when we use spatial data, we jump to spatial statistical methods because of the widely cited first law of geography, that nearby observations are more likely to be similar than those further away
+
+- But maybe what we see as clustering, patchiness, pattern, that looks spatial is actually mis-specification, such as a missing covariate, and/or inappropriate functional form, and/or including variables acting at different scales, and/or consequences of suboptimal bounding of tesselated observations ...
+
+- Here, we'll first look at the consequences of treating inhomogeneous point as homogeneous (the intensity trends upwards with `x`)
+
+- Then we'll use those points to see what happens in adding a similar trend to a random variable; empirical variograms are constructed ignoring and including the trend, and tests for global and local spatial autocorrelation are calculated
+
+### Spatial point processes
+
+We can start by using **spatstat** [@baddeley2015spatial] to generate completely spatially random (CSR) points with intensity increasing with `x` to introduce trend inhomogeneity in a unit square (note the use of `set.seed()`:
+
+```{r, echo=TRUE}
+suppressPackageStartupMessages(library(spatstat))
+intenfun <- function(x, y) 200 * x
+set.seed(1)
+(ihpp <- rpoispp(intenfun, lmax = 200))
+```
+
+
+```{r, echo=TRUE, out.width='90%', fig.align='center'}
+plot(density(ihpp), axes=TRUE)
+points(ihpp, col="green2", pch=19)
+```
+
+We can use $\hat{K}$ tests ignoring and including inhomogeneity to adapt the test to the underlying data generation process. The homogeneous test examines the divergence from a theoretical CSR at distance bins, the inhomogeneous tries to guess the kind of patterning in the relative positions of the point observations. If we ignore the inhomogeneity, we find significant clustering at most distances, with the opposite finding when using the test attempting to accommodate inhomogeneity:
+
+```{r, echo=TRUE, out.width='90%', fig.align='center'}
+opar <- par(mfrow=c(1,2))
+plot(envelope(ihpp, Kest, verbose=FALSE), main="Homogeneous")
+plot(envelope(ihpp, Kinhom, verbose=FALSE), main="Inhomogeneous")
+par(opar)
+```
+
+### Adding a `y` trend variable
+
+Coercing the **spatstat** `"ppp"` object to an **sf** `"sf"` object is trivial, but first adds the window of the point process, which we need to drop by retaining only those labelled `"point"`. Then we take the `x` coordinate and use it to create `y`, which trends with `x`; the DGP is not very noisy.
+
+```{r, echo=TRUE, out.width='90%', fig.align='center'}
+library(sf)
+sf_ihpp <- subset(st_as_sf(ihpp), label == "point")
+#st_as_sf(ihpp) %>% dplyr::filter(label == "point") -> sf_ihpp
+#st_as_sf(ihpp) ->.; .[.$label == "point",] -> sf_ihpp
+crds <- st_coordinates(sf_ihpp)
+sf_ihpp$x <- crds[,1]
+sf_ihpp$y <- 100 + 50 * sf_ihpp$x + 20 * rnorm(nrow(sf_ihpp))
+plot(sf_ihpp[,"y"], pch=19)
+```
+
+### Variogram model
+
+Variograms for models ignoring (`y ~ 1`) and including (`y ~ x`) the trend; if we ignore the trend, we find spurious relationships, shown by `loess()` fits
+
+```{r, echo=TRUE, out.width='90%', fig.align='center'}
+suppressPackageStartupMessages(library(gstat))
+vg0 <- variogram(y ~ 1, sf_ihpp)
+vg1 <- variogram(y ~ x, sf_ihpp)
+library(ggplot2)
+g0 <- ggplot(vg0, aes(x=dist, y=gamma)) + geom_point() + geom_smooth(span=1) + ylim(300, 575) + ggtitle("Trend ignored")
+g1 <- ggplot(vg1, aes(x=dist, y=gamma)) + geom_point() + geom_smooth(span=1) + ylim(300, 575) + ggtitle("Trend included")
+gridExtra::grid.arrange(g0, g1, ncol=2)
+```
+
+### Spatial autocorrelation
+
+Going on from a continuous to a discrete treatment of space, we can use functions in **spdep** to define neighbours and then test for global and local spatial autocorrelation. Making first a triangulated neighbour objects, we can thin out improbable neighbours lying too far from one another using a sphere of influence graph to make a symmetric neighbour object:
+
+```{r, echo=TRUE, results='hide', message=FALSE}
+suppressPackageStartupMessages(library(spdep))
+nb_tri <- tri2nb(crds)
+```
+
+```{r, echo=TRUE}
+(nb_soi <- graph2nb(soi.graph(nb_tri, crds), sym=TRUE))
+```
+
+The sphere of influence graph generates three subgraphs; a bit unfortunate, but we can live with that (for now):
+
+```{r, echo=TRUE, out.width='90%', fig.align='center'}
+plot(nb_soi, crds)
+```
+
+```{r, echo=TRUE}
+comps <- n.comp.nb(nb_soi)
+sf_ihpp$comps <- comps$comp.id
+comps$nc
+```
+
+Using binary weights, looking at the variable but ignoring the trend, we find strong global spatial autocorrelation using global Moran's $I$ (tests return `"htest"` objects tidied here using **broom**)
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+lwB <- nb2listw(nb_soi, style="B")
+out <- broom::tidy(moran.test(sf_ihpp$y, listw=lwB, randomisation=FALSE, alternative="two.sided"))[1:5]
+names(out)[1:3] <- c("Moran's I", "Expectation", "Variance"); out
+```
+
+If, however, we take the residuals after including the trend using a linear model, the apparent spatial autocorrelation evaporates
+
+```{r, echo=TRUE}
+lm_obj <- lm(y ~ x, data=sf_ihpp)
+out <- broom::tidy(lm.morantest(lm_obj, listw=lwB, alternative="two.sided"))[1:5]
+names(out)[1:3] <- c("Moran's I", "Expectation", "Variance"); out
+```
+
+The same happens if we calculate local Moran's $I$ ignoring the trend (randomisation assumption), and including the trend (normality assumption and saddlepoint approximation)
+
+```{r, echo=TRUE}
+lmor0 <- localmoran(sf_ihpp$y, listw=lwB, alternative="two.sided")
+lmor1 <- as.data.frame(localmoran.sad(lm_obj, nb=nb_soi, style="B", alternative="two.sided"))
+sf_ihpp$z_value <- lmor0[,4]
+sf_ihpp$z_lmor1_N <- lmor1[,2]
+sf_ihpp$z_lmor1_SAD <- lmor1[,4]
+```
+
+```{r, echo=TRUE, warning=FALSE, out.width='90%', fig.align='center', width=7, height=4}
+suppressPackageStartupMessages(library(tmap))
+tm_shape(sf_ihpp) + tm_symbols(col=c("z_value", "z_lmor1_N", "z_lmor1_SAD"), midpoint=0) + tm_facets(free.scales=FALSE, nrow=1) + tm_layout(panel.labels=c("No trend", "Trend, normal", "Trend, SAD"))
+```
+
+
+
+Look at the [North Carolina SIDS data vignette](https://r-spatial.github.io/spdep/articles/sids.html) for background:
+
+```{r, echo=TRUE}
+library(sf)
+nc <- st_read(system.file("shapes/sids.shp", package="spData")[1], quiet=TRUE)
+st_crs(nc) <- "+proj=longlat +datum=NAD27"
+row.names(nc) <- as.character(nc$FIPSNO)
+head(nc)
+```
+
+The variables are largely count data, `L_id` and `M_id` are grouping variables. We can also read the original neighbour object:
+
+```{r, echo=TRUE, warning=FALSE}
+library(spdep)
+gal_file <- system.file("weights/ncCR85.gal", package="spData")[1]
+ncCR85 <- read.gal(gal_file, region.id=nc$FIPSNO)
+ncCR85
+```
+
+```{r, echo=TRUE, warning=TRUE, out.width='90%', fig.align='center', width=7, height=4}
+plot(st_geometry(nc), border="grey")
+plot(ncCR85, st_centroid(st_geometry(nc), of_largest_polygon), add=TRUE, col="blue")
+```
+Now generate a random variable. Here I've set the seed - maybe choose your own, and compare outcomes with the people around you. With many people in the room, about 5 in 100 may get a draw that is autocorrelated when tested with Moran's $I$ (why?).
+
+```{r, echo=TRUE}
+set.seed(1)
+nc$rand <- rnorm(nrow(nc))
+lw <- nb2listw(ncCR85, style="B")
+moran.test(nc$rand, listw=lw, alternative="two.sided")
+```
+
+Now we'll create a trend (maybe try plotting `LM` to see the trend pattern). Do we get different test outcomes by varying beta and sigma (alpha is constant).
+
+```{r, echo=TRUE}
+nc$LM <- as.numeric(interaction(nc$L_id, nc$M_id))
+alpha <- 1
+beta <- 0.5
+sigma <- 2
+nc$trend <- alpha + beta*nc$LM + sigma*nc$rand
+moran.test(nc$trend, listw=lw, alternative="two.sided")
+```
+To get back to reality, include the trend in a linear model, and test again. 
+
+```{r, echo=TRUE}
+lm.morantest(lm(trend ~ LM, nc), listw=lw, alternative="two.sided")
+```
+
+So we can manipulate a missing variable mis-specification to look like spatial autocorrelation. Is this informative?
+
+
+Sometimes we only have data on a covariate for aggregates of our units of observation. What happens when we "copy out" these aggregate values to the less aggregated observations? First we'll aggregate `nc` by `LM`, then make a neighbour object for the aggregate units
+
+```{r, echo=TRUE}
+aggLM <- aggregate(nc[,"LM"], list(nc$LM), head, n=1)
+(aggnb <- poly2nb(aggLM))
+```
+
+Next, draw a random sample for the aggregated units:
+
+```{r, echo=TRUE}
+set.seed(1)
+LMrand <- rnorm(nrow(aggLM))
+```
+
+Check that it does not show any spatial autocorrelation:
+
+```{r, echo=TRUE}
+moran.test(LMrand, nb2listw(aggnb, style="B"))
+```
+
+Copy it out to the full data set, indexing on values of LM; the pattern now looks pretty autocorrelated
+
+```{r, echo=TRUE}
+nc$LMrand <- LMrand[match(nc$LM, aggLM$LM)]
+plot(nc[,"LMrand"])
+```
+
+which it is:
+
+```{r, echo=TRUE}
+moran.test(nc$LMrand, listw=lw, alternative="two.sided")
+```
+
+Again, we've manipulated ourselves into a situation with abundant spatial autocorrelation at the level of the counties, but only by copying out from a more aggregated level. What is going on?
+
+# Constructing neighbour and spatial weight objects
+
+Areal units of observation are very often used when simultaneous observations are aggregated within non-overlapping boundaries. The boundaries may be those of administrative entities, and may be related to underlying spatial processes, such as commuting flows, but are usually arbitrary. If they do not match the underlying and unobserved spatial processes in one or more variables of interest, proximate areal units will contain parts of the underlying processes, engendering spatial autocorrelation. By proximity, we mean _closeness_ in ways that make sense for the data generation processes thought to be involved. In cross-sectional geostatistical analysis with point support, measured distance makes sense for typical data generation processes. In similar analysis of areal data, sharing a border may make more sense, because that is what we do know, but we cannot measure the distance between the areas in as adequate a way.  
+
+With support of data we mean the physical size (lenth, area, volume) associated with an individual observational unit (measurement).  It is possible to represent the support of areal data by a point, despite the fact that the data have polygonal support. The centroid of the polygon may be taken as a representative point, or the centroid of the largest polygon in a multi-polygon object. When data with intrinsic point support are treated as areal data, the change of support goes the other way, from the known point to a non-overlapping tesselation such as a Voronoi diagram or Dirichlet tessellation or Thiessen polygons often through a Delaunay triangulation using projected coordinates. Here, different metrics may also be chosen, or distances measured on a network rather than on the plane. There is also a literature using weighted Voronoi diagrams in local spatial analysis [see for example @doi:10.1080/13658810601034267; @doi:10.1080/13658810701587891; @SHE201570].
+
+When the intrinsic support of the data is as points, but the underlying process is between proximate observations rather than driven chiefly by distance however measured between observations, the data may be aggregate counts or totals (polling stations, retail turnover) or represent a directly observed characteristic of the observation (opening hours of the polling station). Obviously, the risk of mis-representing the footprint of the underlying spatial processes remains in all of these cases, not least because the observations are taken as encompassing the entirety of the underlying process in the case of tesselation of the whole area of interest. This is distinct from the geostatistical setting in which observations are rather samples taken using some scheme within the area of interest. It is also partly distinct from the practice of taking areal sample plots within the area of interest but covering only a small proportion of the area, typically used in ecological and environmental research.
+
+In order to explore and analyse areal data of these kinds, methods are needed to represent the proximity of observations. This chapter then considers a subset of the such methods, where the spatial processes are considered as working through proximity understood in the first instance as contiguity, as a graph linking observations taken as neighbours. This graph is typically undirected and unweighted, but may be directed and/or weighted in certain settings, which then leads to further issues with regard to symmetry. In principle, proximity would be expected to operate symmetrically in space, that is that the influence of $i$ on $j$ and of $j$ on $i$ based on their relative positions should be equivalent. Edge effects are not considered in standard treatments.
+
+
+## Representing proximity in **spdep**
+
+Handling spatial autocorrelation using relationships to neighbours on a graph takes the graph as given, chosen by the analyst. This differs from the geostatistical approach in which the analyst chooses the binning of the empirical variogram and function used, and then the way the fitted variogram is fitted. Both involve a priori choices, but represent the underlying correlation in different ways [@wall:04]. In Bavaud [-@bavaud:98] and work citing his contribution, attempts have been made to place graph-based neighbours in a broader context.
+
+One issue arising in the creation of objects representing neighbourhood relationships is that of no-neighbour areal units [@bivand+portnov:04]. Islands or units separated by rivers may not be recognised as neighbours when the units have areal support and when using topological relationships such as shared boundaries. In some settings, for example `mrf` (Markov Random Field) terms in `mgcv::gam()` and similar model fitting functions that require undirected connected graphs, a requirement is violated when there are disconnected subgraphs. 
+
+No-neighbour observations can also occur when a distance threshold is used between points, where the threshold is smaller than the maximum nearest neighbour distance. Shared boundary contiguities are not affected by using geographical, unprojected coordinates, but all point-based approaches use distance in one way or another, and need to calculate distances in an appropriate way.
+
+The **spdep** package provides an `nb` class for neighbours, a list of length equal to the number of observations, with integer vector components. No-neighbours are encoded as an integer vector with a single element `0L`, and observations with neighbours as sorted integer vectors containing values in `1L:n` pointing to the neighbouring observations. This is a typical row-oriented sparse representation of neighbours. **spdep** provides many ways of constructing `nb` objects, and the representation and construction functions are widely used in other packages. 
+
+**spdep** builds on the `nb` representation (undirected or directed graphs) with the `listw` object, a list with three components, an `nb` object, a matching list of numerical weights, and a single element character vector containing the single letter name of the way in which the weights were calculated. The most frequently used approach in the social sciences is calculating weights by row standardization, so that all the non-zero weights for one observation will be the inverse of the cardinality of its set of neighbours (`1/card(nb[[i]])`).
+
+We will be using election data from the 2015 Polish Presidential election in this chapter, with 2495 municipalities and Warsaw boroughs of the municipality types) , and complete count data from polling stations aggregated to these areal units. The data are an **sf** `sf` object:
+
+
+```{r}
+data(pol_pres15, package="spDataLarge")
+pol_pres15 |> 
+    subset(select=c(TERYT, name, types)) |> 
+    head()
+```
+
+```{r plotpolpres15}
+library(tmap)
+tm_shape(pol_pres15) + tm_fill("types")
+```
+
+Between early 2002 and April 2019, **spdep** contained functions for constructing and handling neighbour and spatial weights objects, tests for spatial autocorrelation, and model fitting functions. The latter have been split out into **spatialreg**, and will be discussed in the next chapter. **spdep** now accommodates objects represented using **sf** classes and **sp** classes directly.
+
+```{r}
+library(spdep)
+```
+
+## Contiguous neighbours
+
+The `poly2nb()` function in **spdep** takes the boundary points making up the polygon boundaries in the object passed as the `pl=` argument, and for each observation checks whether at least one (`queen=TRUE`, default), or at least two (rook, `queen=FALSE`) points are within `snap=` distance units of each other. The distances are planar in the raw coordinate units, ignoring geographical projections. Once the required number of sufficiently close points is found, the search is stopped.
+
+```{r}
+args(poly2nb)
+```
+From **spdep** 1.1-7, the GEOS interface of the **sf** package is used within `poly2nb()` if `foundInBox=NULL` to find the candidate neighbours and populate `foundInBox` internally. In this case, this use of spatial indexing (STRtree queries) in GEOS through **sf** is the default:
+
+```{r}
+system.time(pol_pres15 |> poly2nb(queen=TRUE) -> nb_q)
+```
+The print method shows the summary structure of the neighbour object:
+
+```{r}
+nb_q
+```
+If the objects are in unprojected coordinate reference systems, as is the case here, the candidate neighbours are found using spherical spatial indexing in the \pkg{s2} package. There is a minor cost to the use of spherical rather than planar topological predicates but only roughly a doubling of processing time. R spatial packages are choosing to prefer spherical rather than planar representations for geographical coordinate reference systems because straight line segments between two points are only straight in planar settings, not in spherical pretending to be planar, something we have known at least since Al-Khwarizmi.
+
+Much of the work involved in finding contiguous neighbours is spent on finding candidate neighbours with intersecting bounding boxes. Note that `nb` objects record both symmetric neighbour relationships, because these objects admit asymmetric relationships as well, but these duplications are not needed for object construction.
+
+Most of the **spdep** functions for constructing neighbour objects take a `row.names=` argument, the value of which is stored as a `region.id` attribute. If not given, the values are taken from `row.names()` of the first argument. These can be used to check that the neighbours object is in the same order as data. If `nb` objects are subsetted, the indices change to continue to be within `1:length(subsetted_nb)`, but the `region.id` attribute values point back to the object from which it was constructed.
+
+We can also check that this undirected graph is connected using the `n.comp.nb()` function; while some model estimation techniques do not support graphs that are not connected, it is helpful to be aware of possible problems [@FRENISTERRANTINO201825]:
+```{r}
+(nb_q |> n.comp.nb())$nc
+```
+
+This approach is equivalent to treating the neighbour object as a graph and using graph analysis on that graph [@csardi+nepusz:06], by first coercing to a binary sparse matrix:
+
+```{r}
+library(Matrix)
+nb_q |> 
+    nb2listw(style="B") |> 
+    as("CsparseMatrix") -> smat
+library(igraph)
+(smat |> 
+        graph.adjacency() -> g1) |> 
+    count_components()
+```
+
+Neighbour objects may be exported and imported in GAL format for exchange with other software, using `write.nb.gal()` and `read.gal()`:
+
+```{r}
+tf <- tempfile(fileext=".gal")
+write.nb.gal(nb_q, tf)
+```
+
+
+
+## Graph-based neighbours
+
+If areal units are an appropriate representation, but only points have been observed, contiguity relationships may be approximated using graph-based neighbours. In this case, the imputed boundaries tesselate the plane such that points closer to one observation than any other fall within its polygon. The simplest form is by using triangulation, here using the `deldir()` function in the **deldir** package. Because the function returns from and to identifiers, it is easy to construct a long representation of a `listw` object, as used in the S-Plus SpatialStats module and the `sn2listw()` function internally to construct an `nb` object (ragged wide representation). Alternatives often fail to return sufficient information to permit the neighbours to be identified.
+
+The `soi.graph()` function takes triangulated neighbours and prunes off neighbour relationships represented by unusually long edges, especially around the convex hull, but may render the output object asymmetric. Other graph-based approaches include `relativeneigh()` and `gabrielneigh()`.
+
+The output of these functions is then converted to the `nb` representation using `graph2nb()`, with the possible use of the `sym=` argument to coerce to symmetry. We take the centroids of the largest component polygon for each observation as the point representation; population-weighted centroids might have been a better choice if they were available:
+
+```{r}
+pol_pres15 |> 
+    st_geometry() |> 
+    st_centroid(of_largest_polygon=TRUE) -> coords 
+(coords |> tri2nb() -> nb_tri)
+```
+
+The average number of neighbours is similar to the Queen boundary contiguity case, but if we look at the distribution of edge lengths using `nbdists()`, we can see that although the upper quartile is about 15 km, the maximum is almost 300 km, an edge along much of one side of the convex hull. The short minimum distance is also of interest, as many centroids of urban municipalities are very close to the centroids of their surrounding rural counterparts.
+
+```{r}
+nb_tri |> 
+    nbdists(coords) |> 
+    unlist() |> 
+    summary()
+```
+Triangulated neighbours also yield a connected graph:
+```{r}
+(nb_tri |> n.comp.nb())$nc
+```
+
+The sphere of influence graph trims a neighbour object such as `nb_tri` to remove edges that seem long in relation to typical neighbours [@avis+horton:1985].
+```{r}
+(nb_tri |> 
+        soi.graph(coords) |> 
+        graph2nb() -> nb_soi)
+```
+Unpicking the triangulated neighbours does however remove the connected character of the underlying graph:
+
+```{r}
+(nb_soi |> n.comp.nb() -> n_comp)$nc
+```
+The SoI algorithm has stripped out longer edges leading to urban and rural municipality pairs where their centroids are very close to each other because the rural ones completely surround the urban, giving 15 pairs of neighbours unconnected to the main graph:
+
+```{r}
+table(n_comp$comp.id)
+```
+
+The largest length edges along the convex hull have been removed, but "holes" have appeared where the unconnected pairs of neighbours have appeared. The differences between `nb_tri` and `nb_soi` are shown in orange.
+
+```{r plotnbdiff}
+opar <- par(mar=c(0,0,0,0)+0.5)
+pol_pres15 |> 
+    st_geometry() |> 
+    plot(border="grey", lwd=0.5)
+nb_soi |> 
+    plot(coords=coords, add=TRUE, points=FALSE, lwd=0.5)
+nb_tri |> 
+    diffnb(nb_soi) |> 
+    plot(coords=coords, col="orange", add=TRUE, points=FALSE, lwd=0.5)
+par(opar)
+```
+
+## Distance-based neighbours
+
+Distance-based neighbours can be constructed using `dnearneigh()`, with a distance band with lower `d1=` and upper `d2=` bounds controlled by the `bounds=` argument. If spherical coordinates are used and either specified in the coordinates object `x` or with `x` as a two column matrix and `longlat=TRUE`, great circle distances in km will be calculated assuming the WGS84 reference ellipsoid. From **spdep** 1.1-7, two arguments have been added, to use functionality in the **dbscan** package for finding neighbours using a kd-tree in two or three dimensions by default, and not to test the symmetry of the output neighbour object. 
+
+The `knearneigh()` function for $k$-nearest neighbours returns a `knn` object, converted to an `nb` object using `knn2nb()`. It can also use great circle distances, not least because nearest neighbours may differ when uprojected coordinates are treated as planar. `k=` should be a small number. For projected coordinates, the **dbscan** package is used to compute nearest neighbours more efficiently. Note that `nb` objects constructed in this way are most unlikely to be symmetric, hence `knn2nb()` has a `sym=` argument to permit the imposition of symmetry, which will mean that all units have at least `k=` neighbours, not that all units will have exactly `k=` neighbours.
+
+The `nbdists()` function returns the length of neighbour relationship edges in the units of the coordinates if the coordinates are projected, in km otherwise. In order to set the upper limit for distance bands, one may first find the maximum first nearest neighbour distance, using `unlist()` to remove the list structure of the returned object.
+
+```{r}
+coords |> 
+    knearneigh(k=1) |> 
+    knn2nb() |> 
+    nbdists(coords) |> 
+    unlist() |> 
+    summary()
+```
+Here the largest first nearest neighbour distance is just under 18 km, so using this as the upper threshold gives certainty that all units will have at least one neighbour:
+
+```{r}
+system.time(coords |> dnearneigh(0, 18000) -> nb_d18)
+system.time(coords |> dnearneigh(0, 18000, use_kd_tree=FALSE) -> nb_d18a)
+all.equal(nb_d18, nb_d18a, check.attributes=FALSE)
+nb_d18
+```
+However, even though there are no no-neighbour observations (their presence is reported by the print method for `nb` objects), the graph is not connected, as a pair of observations are each others' only neighbours.
+```{r}
+(nb_d18 |> n.comp.nb() -> n_comp)$nc
+```
+```{r}
+table(n_comp$comp.id)
+```
+Adding 300 m to the threshold gives us a neighbour object with no no-neighbour units, and all units can be reached from all others across the graph.
+```{r}
+(coords |> dnearneigh(0, 18300) -> nb_d183)
+```
+```{r}
+(nb_d183 |> n.comp.nb())$nc
+```
+
+One characteristic of distance-based neighbours is that more densely settled areas, with units which are smaller in terms of area (Warsaw boroughs are much smaller on average, but have almost 30 neighbours). Having many neighbours smooths the neighbour relationship across more neighbours. For use later, we also construct a neighbour object with no-neighbour units, using a threshold of 16 km:
+```{r}
+(coords |> dnearneigh(0, 16000) -> nb_d16)
+```
+
+It is possible to control the numbers of neighbours directly using $k$-nearest neighbours, either accepting asymmetric neighbours or imposing symmetry:
+```{r}
+(coords |> knearneigh(k=6) -> knn_k6) |> knn2nb()
+```
+
+```{r}
+(knn_k6 |> knn2nb(sym=TRUE) -> nb_k6s)
+```
+
+Here the size of `k=` is sufficient to ensure connectedness, although the graph is not planar as edges cross at locations other than nodes, which is not the case for contiguous or graph-based neighbours.
+```{r}
+(nb_k6s |> n.comp.nb())$nc
+```
+
+## Weights specification
+
+Once neighbour objects are available, further choices need to made in specifying the weights objects. The `nb2listw()` function is used to create a `listw` weights object with an `nb` object, a matching list of weights vectors, and a style specification. Because handling no-neighbour observations now begins to matter, the `zero.policy=` argument is introduced. By default, this is `FALSE`, indicating that no-neighbour observations will cause an error, as the spatially lagged value for an observation with no neighbours is not available. By convention, zero is substituted for the lagged value, as the cross product of a vector of zero-valued weights and a data vector, hence the name of `zero.policy`.
+
+```{r}
+args(nb2listw)
+```
+We will be using the helper function `spweights.constants()` below to show some consequences of varing style choices. It returns constants for a `listw` object, $n$ is the number of observations, `n1` to `n3` are $n-1, \ldots$, `nn` is $n^2$ and $S_0$, $S_1$ and $S_2$ are constants, $S_0$ being the sum of the weights. There is a full discussion of the constants in Bivand and Wong [-@Bivand2018].
+
+```{r}
+args(spweights.constants)
+```
+The `"B"` binary style gives a weight of unity to each neighbour relationship, and typically upweights units with no boundaries on the edge of the study area.
+
+```{r}
+(nb_q |> 
+        nb2listw(style="B") -> lw_q_B) |> 
+    spweights.constants() |> 
+    data.frame() |> 
+    subset(select=c(n, S0, S1, S2))
+```
+
+The `"W"` row-standardized style upweights units around the edge of the study area that necessarily have fewer neighbours. This style first gives a weight of unity to each neighbour relationship, then divides these weights by the per unit sums of weights. Naturally this leads to division by zero where there are no neighbours, a not-a-number result, unless the chosen policy is to permit no-neighbour observations. We can see that $S_0$ is now equal to $n$.
+
+```{r}
+(nb_q |> 
+        nb2listw(style="W") -> lw_q_W) |> 
+    spweights.constants() |> 
+    data.frame() |> 
+    subset(select=c(n, S0, S1, S2))
+```
+Inverse distance weights are used in a number of scientific fields. Some use dense inverse distance matrices, but many of the inverse distances are close to zero, so have little practical contribution, especially as the spatial process matrix is itself dense. Inverse distance weights may be constructed by taking the lengths of edges, changing units to avoid most weights being too large or small (here from m to km), taking the inverse, and passing through the `glist=` argument to `nb2listw()`:
+
+```{r}
+nb_d183 |> 
+    nbdists(coords) |> 
+    lapply(\(x) 1/(x/1000)) -> gwts
+(nb_d183 |> nb2listw(glist=gwts, style="B") -> lw_d183_idw_B) |> 
+    spweights.constants() |> 
+    data.frame() |> 
+    subset(select=c(n, S0, S1, S2))
+```
+No-neighbour handling is by default to prevent the construction of a weights object, making the analyst take a position on how to proceed.
+
+```{r}
+try(nb_d16 |> nb2listw(style="B") -> lw_d16_B)
+```
+Use can be made of the `zero.policy=` argument to many functions used with `nb` and `listw` objects.
+
+```{r}
+nb_d16 |> 
+    nb2listw(style="B", zero.policy=TRUE) |> 
+    spweights.constants(zero.policy=TRUE) |> 
+    data.frame() |> 
+    subset(select=c(n, S0, S1, S2))
+```
+Note that by default the `adjust.n=` argument to `spweights.constants()` is set by default to `TRUE`, subtracting the count of no-neighbour observations from the observation count, so $n$ is smaller with possible consequences for inference. The complete count can be retrieved by changing the argument.
+
+## Higher order neighbours
+
+We recall the characteristics of the neighbour object based on Queen contiguities:
+
+```{r}
+nb_q
+```
+If we wish to create an object showing $i$ to $k$ neighbours, where $i$ is a neighbour of $j$, and $j$ in turn is a neighbour of $k$, so taking two steps on the neighbour graph, we can use `nblag()`, which automatically removes $i$ to $i$ self-neighbours:
+
+```{r}
+(nb_q |> nblag(2) -> nb_q2)[[2]]
+```
+The `nblag_cumul()` function cumulates the list of neighbours for the whole list of lags:
+
+```{r}
+nblag_cumul(nb_q2)
+```
+while the set operation `union.nb()` takes two objects, giving here the same outcome:
+
+```{r}
+union.nb(nb_q2[[2]], nb_q2[[1]])
+```
+Returning to the graph representation of the same neighbour object, we can ask how many steps might be needed to traverse the graph:
+
+```{r}
+diameter(g1)
+```
+We step out from each observation across the graph to establish the number of steps needed to reach each other observation by the shortest path, once again finding the same count, and that the municipality is called Lutowiska, close to the Ukrainian border in the far south east of the country.
+
+```{r}
+g1 |> shortest.paths() -> sps
+(sps |> apply(2, max) -> spmax) |> max()
+```
+
+```{r}
+mr <- which.max(spmax)
+pol_pres15$name0[mr]
+```
+
+```{r, echo=FALSE}
+pol_pres15$sps1 <- sps[,mr]
+tm1 <- tm_shape(pol_pres15) + tm_fill("sps1", title="Shortest path\ncount")
+```
+
+
+```{r, echo=FALSE}
+coords[mr] |> 
+    st_distance(coords) |> 
+    c() |> 
+    (\(x) x/1000)() |> 
+    units::set_units(NULL) -> pol_pres15$dist_52
+library(ggplot2)
+g1 <- ggplot(pol_pres15, aes(x=sps1, y=dist_52)) + geom_point() + xlab("shortest path count") +  ylab("km distance")
+```
+
+This shows that contiguity neighbours represent the same kinds of relationships with other observations as distance. Some approaches prefer distance neighbours on the basis that, for example, inverse distance neighbours show clearly how all observations are related to each other. However, the development of both tests for spatial autocorrelation, and spatial regression models has involved the inverse of a spatial process model, which in turn can be represented as the sum of a power series of the neighbour object and a coefficient, so intrinsically acknowledging the relationships of all with all other. Sparse contiguity neighbour objects accommodate rich dependency structures without the need to make the structures explicit.
+
+Relationship of shortest paths to distance for Lutowiska; left panel: shortest path counts from Lutowiska; right panel: plot of shortest paths from Lutowiska to other observations and distances (km) from Lutowiska to other observations
+```{r shortestpath}
+gridExtra::grid.arrange(tmap_grob(tm1), g1, nrow=1)
+```
+
+Finally, we create contiguity neighbours for the US Census tracts, completing in a respectable 25 seconds:
+
+```{r, eval=FALSE}
+library(spdep)
+t0 <- system.time(nb_subset <- poly2nb(df_tracts, queen=TRUE, row.names=map10$GEOID))
+saveRDS(nb_subset, file="nb_subset.rds")
+#   user  system elapsed 
+# 24.233   0.129  24.417 
+```
+
+
+
+```{r, eval=TRUE}
+library(spdep)
+(nb_subset <- readRDS("nb_subset.rds"))
+```
+
+# Measures of spatial autocorrelation {#spatautocorr}
+
+
+```{r}
+library(sf)
+```
+
+```{r}
+data(pol_pres15, package="spDataLarge")
+pol_pres15 |> 
+    subset(select=c(TERYT, name, types)) |> 
+    head()
+```
+
+```{r}
+library(spdep)
+pol_pres15 |> poly2nb(queen=TRUE) -> nb_q
+nb_q |> nb2listw(style="B") -> lw_q_B
+nb_q |> nb2listw(style="W") -> lw_q_W
+```
+
+
+```{r}
+pol_pres15 |> st_geometry() |> st_centroid(of_largest_polygon=TRUE) -> coords 
+coords |> dnearneigh(0, 18300) -> nb_d183
+nb_d183 |> nbdists(coords) |> lapply(\(x) 1/(x/1000)) -> gwts
+nb_d183 |> nb2listw(glist=gwts, style="B") -> lw_d183_idw_B
+```
+
+When analysing areal data, it has long been recognised that, if present, spatial autocorrelation changes how we may infer, relative to the default position of independent observations. In the presence of spatial autocorrelation, we can predict the values of observation $i$ from the values observed at $j \in N_i$, the set of its proximate neighbours. Early results [@moran48; @geary:54], entered into research practice gradually, for example the social sciences [@duncanetal61]. These results were then collated and extended to yield a set of basic tools of analysis [@cliff+ord:73; @cliff+ord:81]. 
+
+@cliff+ord:73 generalised and extended the expression of the spatial weights matrix representation as part of the framework for establishing the distribution theory for join count, Moran's $I$ and Geary's $C$ statistics. This development of what have become known as global measures, returning a single value of autocorrelation for the total study area, has been supplemented by local measures returning values for each areal unit [@getis+ord:92; @anselin:95].
+
+## Global measures
+
+We will begin by examining join count statistics, where `joincount.test()` takes a `factor` vector of values `fx=` and a `listw` object, and returns a list of `htest` (hypothesis test) objects defined in the **stats** package, one `htest` object for each level of the `fx=` argument. The observed counts are of neighbours with the same factor levels, known as same-colour joins.
+
+```{r}
+args(joincount.test)
+```
+The function takes an `alternative=` argument for hypothesis testing, a `sampling=` argument showing the basis for the construction of the variance of the measure, where the default `"nonfree"` choice corresponds to analytical permutation; the `spChk=` argument is retained for backward compatibility. For reference, the counts of factor levels for the type of municipality or Warsaw borough are:
+
+```{r}
+(pol_pres15 |> 
+        st_drop_geometry() |> 
+        subset(select=types, drop=TRUE) -> Types) |> 
+    table()
+```
+Since there are four levels, we re-arrange the list of `htest` objects to give a matrix of estimated results. The observed same-colour join counts are tabulated with their expectations based on the counts of levels of the input factor, so that few joins would be expected between for example Warsaw boroughs, because there are very few of them. The variance calculation uses the underlying constants of the chosen `listw` object and the counts of levels of the input factor. The z-value is obtained in the usual way by dividing the difference between the observed and expected join counts by the square root of the variance.
+
+The join count test was subsequently adapted for multi-colour join counts [@upton+fingleton:85]. The implementation as `joincount.mult()` in **spdep** returns a table based on nonfree sampling, and does not report p-values.
+
+```{r}
+Types |> joincount.multi(listw=lw_q_B)
+```
+
+So far, we have used binary weights, so the sum of join counts multiplied by the weight on that join remains integer. If we change to row standardised weights, where the weights are not unity in all cases, the counts, expectations and variances change, but there are few major changes in the z-values.
+
+Using an inverse distance based `listw` object does, however, change the z-values markedly, because closer centroids are upweighted relatively strongly:
+
+```{r}
+Types |> joincount.multi(listw=lw_d183_idw_B)
+```
+
+The implementation of Moran's $I$ in **spdep** in the `moran.test()` function has similar arguments to those of `joincount.test()`, but `sampling=` is replaced by `randomisation=` to indicate the underlying analytical approach used for calculating the variance of the measure. It is also possible to use ranks rather than numerical values [@cliff+ord:81, p. 46]. The `drop.EI2=` agrument may be used to reproduce results where the final component of the variance term is omitted as found in some legacy software implementations.
+
+```{r}
+args(moran.test)
+```
+
+The default for the `randomisation=` argument is `TRUE`, but here we will simply show that the test under normality is the same as a test of least squares residuals with only the intercept used in the mean model. The spelling of randomisation is that of @cliff+ord:73.
+
+```{r}
+glance_htest <- function(ht) c(ht$estimate, 
+    "Std deviate"=unname(ht$statistic), 
+    "p.value"=unname(ht$p.value))
+(pol_pres15 |> 
+        st_drop_geometry() |> 
+        subset(select=I_turnout, drop=TRUE) -> z) |> 
+    moran.test(listw=lw_q_B, randomisation=FALSE) |> 
+    glance_htest()
+```
+
+The `lm.morantest()` function also takes a `resfun=` argument to set the function used to extract the residuals used for testing, and clearly lets us model other salient features of the response variable [@cliff+ord:81, p. 203]. To compare with the standard test, we are only using the intercept here, and as can be seen, the results are the same.
+
+```{r}
+lm(I_turnout ~ 1, pol_pres15) |> 
+    lm.morantest(listw=lw_q_B) |> 
+    glance_htest()
+```
+The only difference between tests under normality and randomisation is that an extra term is added if the kurtosis of the variable of interest indicates a flatter or more peaked distribution, where the measure used is the classical measure of kurtosis. Under the default randomisation assumption of analytical randomisation, the results are largely unchanged.
+
+```{r}
+(z |> 
+    moran.test(listw=lw_q_B) -> mtr) |> 
+    glance_htest()
+```
+
+Of course, from the very beginning, interest was shown in Monte Carlo testing, also known as a Hope-type test and as a permutation bootstrap. By default, `moran.mc()` returns a `"htest"` object, but may simply use `boot::boot()` internally and return a `"boot"` object when `return_boot=TRUE`. In addition the number of simulations of the variable of interest by permutation, that is shuffling the values across the observations at random, needs to be given as `nsim=`.
+
+```{r}
+set.seed(1)
+z |> 
+    moran.mc(listw=lw_q_B, nsim=999, return_boot = TRUE) -> mmc
+```
+The bootstrap permutation retains the outcomes of each of the random permutations, reporting the observed value of the statistic, here Moran's $I$, the difference between this value and the mean of the simulations under randomisation (equivalent to $E(I)$), and the standard deviation of the simulations under randomisation. 
+
+If we compare the Monte Carlo and analytical variances of $I$ under randomisation, we typically see few differences, arguably rendering Monte Carlo testing unnecessary.
+
+```{r}
+c("Permutation bootstrap"=var(mmc$t), 
+  "Analytical randomisation"=unname(mtr$estimate[3]))
+```
+Geary's global $C$ is implemented in `geary.test()` largely following the same argument structure as `moran.test()`. The Getis-Ord $G$ test includes extra arguments to accommodate differences between implementations, as @Bivand2018 found multiple divergences from the original definitions, often to omit no-neighbour observations generated when using distance band neighbours. It is given by [@getis+ord:92, page 194]. For $G_*$, the $\sum_{(2)}$ constraint is relaxed by including $i$ as a neighbour of itself (thereby also removing the no-neighbour problem, because all observations have at least one neighbour).
+
+Finally, the empirical Bayes Moran's $I$ takes account of the denominator in assessing spatial autocorrelation in rates data [@assuncao+reis:99]. Until now, we have considered the proportion of valid votes cast in relation to the numbers entitled to vote by spatial entity, but using `EBImoran.mc()` we can try to accommodate uncertainty in extreme rates in entities with small numbers entitled to vote. There is, however, little impact on the outcome in this case.
+
+Global measures of spatial autocorrelation using spatial weights objects based on graphs of neighbours are, as we have seen, rather blunt tools, which for interpretation depend critically on a reasoned mean model of the variable in question. If the mean model is just the intercept, the global measures will respond to all kinds of mis-specification, not only spatial autocorrelation. A key source of mis-specification will typically also include the choice of entities for aggregation of data.
+
+### ACS CV data set
+
+```{r}
+df_tracts <- st_read("df_tracts.gpkg")
+```
+
+
+
+```{r}
+(nb_subset <- readRDS("nb_subset.rds"))
+```
+
+
+```{r}
+nc_nb_subset <- n.comp.nb(nb_subset)
+nc_nb_subset$nc
+table(table(nc_nb_subset$comp.id))
+```
+
+
+
+```{r}
+set.ZeroPolicyOption(TRUE)
+lw <- nb2listw(nb_subset, style="W")
+```
+
+
+```{r}
+system.time(mt_med_inc_cv <- moran.test(df_tracts$med_inc_cv, lw, alternative="two.sided"))
+```
+
+
+```{r}
+mt_med_inc_cv
+```
+
+
+
+
+```{r}
+form <- log(med_inc_cv) ~ log1p(vacancy_rate) + log1p(old_rate) + log1p(black_rate) + log1p(hisp_rate) + log1p(group_pop) + log1p(dens)
+```
+
+
+```{r}
+lm_mod <- lm(form, data=df_tracts)
+summary(lm_mod)
+```
+
+
+```{r}
+lm.morantest(lm_mod, lw)
+```
+
+
+## Local measures
+
+Building on insights from the weaknesses of global measures, local indicators of spatial association began to appear in the first half of the 1990s [@anselin:95; @getis+ord:92; @getis+ord:96]. In addition, the Moran plot was introduced, plotting the values of the variable of interest against their spatially lagged values, typically using row-standardised weights to make the axes more directly comparable [@anselin:96]. The `moran.plot()` function also returns an influence measures object used to label observations exerting more than proportional influence on the slope of the line representing global Moran's $I$. We can see that there are many spatial entities exerting such influence. These pairs of observed and lagged observed values make up in aggregate the global measure, but can also be explored in detail. The quadrants of the Moran plot also show low-low pairs in the lower left quadrant, high-high in the upper right quadrant, and fewer low-high and high-low pairs in the upper left and lower right quadrants. 
+
+
+```{r moranplot}
+z |> moran.plot(listw=lw_q_W, labels=pol_pres15$TERYT, cex=1, pch=".", xlab="I round turnout", ylab="lagged turnout") -> infl_W
+```
+If we extract the hat value influence measure from the returned object, the figure suggests that some edge entities exert more than proportional influence (perhaps because of row standardisation), as do entities in or near larger urban areas.
+
+```{r moranhat}
+pol_pres15$hat_value <- infl_W$hat
+library(tmap)
+tm_shape(pol_pres15) + tm_fill("hat_value")
+```
+@Bivand2018 discuss issues impacting the use of local indicators, such as local Moran's $I$ and local Getis-Ord $G$. Some issues affect the calculation of the local indicators, others inference from their values. Because $n$ statistics may be being calculated from the same number of observations, there are multiple comparison problems that need to be addressed. Although the apparent detection of hotspots from values of local indicators has been quite widely adopted, it remains fraught with difficulty because adjustment of the inferential basis to accommodate multiple comparisons is not often chosen, and as in the global case, mis-specification also remains a source of confusion. Further, interpreting local spatial autocorrelation in the presence of global spatial autocorrelation is challenging [@ord+getis:01; @tiefelsdorf:02; @bivandetal:09]. The `mlvar=` and `adjust.x=` arguments to `localmoran()` are discussed in @Bivand2018, and permit matching with other implementations. The `p.adjust.method=` argument uses an untested speculation that adjustment should only take into account the cardinality of the neighbour set of each observation when adjusting for multiple comparisons; using `stats::p.adjust()` is preferable.
+
+
+```{r}
+z |> 
+    localmoran(listw=lw_q_W, conditional=FALSE, alternative="two.sided") -> locm
+```
+
+Recent development: @sauer_oshan_rey_wolf_2021 point out that the analytical inferential basis has been unclear, and argue that `conditional=` (a new argument) should be used rather than the legacy "total" setting based on randomising all the observed values, as in the case of the global test, not the observed values except those at $i$. For reference, here we take the legacy values and contrast them below with the new default.
+
+Taking `"two.sided"` p-values because these local indicators when summed and divided by the sum of the spatial weights, and thus positive and negative local spatial autocorrelation may be present, we obtain:
+
+```{r}
+all.equal(sum(locm[,1])/Szero(lw_q_W), unname(moran.test(z, lw_q_W)$estimate[1]))
+```
+Using `stats::p.adjust()` to adjust for multiple comparisons, we see that 
+almost 29\% of the local measures have p-values < 0.05 if no adjustment is applied, but only 12\% using Bonferroni adjustment, with two other choices also shown:
+
+```{r}
+pva <- \(pv) cbind("none"=pv, "bonferroni"=p.adjust(pv, "bonferroni"), "fdr"=p.adjust(pv, "fdr"), "BY"=p.adjust(pv, "BY"))
+locm |> 
+    subset(select="Pr(z != E(Ii))", drop=TRUE) |> 
+    pva() -> pvsp
+f <- \(x) sum(x < 0.05)
+apply(pvsp, 2, f)
+```
+
+In the global measure case, bootstrap permutations could be used as an alternative to analytical methods for possible inference. In the local case, conditional permutation may be used, retaining the value at observation $i$ and randomly sampling from the remaining $n-1$ values to find randomised values at neighbours, and is provided as `localmoran_perm()`, which will use multiple nodes to sample in parallel if provided, and permits the setting of a seed for the random number generator across the compute nodes:
+
+```{r}
+library(parallel)
+set.coresOption(ifelse(detectCores() == 1, 1, detectCores()-1L))
+system.time(z |> 
+        localmoran_perm(listw=lw_q_W, nsim=499, alternative="two.sided", iseed=1) -> locm_p)
+```
+The outcome is that almost 32\% of observations have two sided p-values < 0.05 without multiple comparison adjustment, and under 3\% with Bonferroni adjustment.
+
+```{r}
+locm_p |> 
+    subset(select="Pr(z != E(Ii))", drop=TRUE) |> 
+    pva() -> pvsp
+apply(pvsp, 2, f)
+```
+We can see what is happening by tabulating counts of the standard deviate of local Moran's $I$, where the two-sided $\alpha=0.05$ bounds would be $0.025$ and $0.975$, but Bonferroni adjustment is close to $0.00001$ and $0.99999$. Without adjustment, almost 800 observations are significant, with Bonferroni adjustment, only 68 in the conditional permutation case:
+
+```{r}
+brks <- qnorm(c(0, 0.00001, 0.0001, 0.001, 0.01, 0.025, 0.5, 0.975, 0.99, 0.999, 0.9999, 0.99999, 1))
+(locm_p |> 
+        subset(select=Z.Ii, drop=TRUE) |> 
+        cut(brks) |> 
+        table()-> tab)
+```
+
+
+```{r}
+sum(tab[c(1:5, 8:12)])
+```
+
+
+```{r}
+sum(tab[c(1, 12)])
+```
+@Bivand2018 were puzzled by the discrepancy between the analytical and permutation-based standard deviates of local Moran's $I_i$. Because local indicators of spatial association have become such a central part of exploratory data analysis, some of the puzzles in the practical application of these measures will be examined here in detail, as a case study in open source implementation and comparison. In @Bivand2018, we did not read the appendix of @sokaletal:98 carefully enough, as has been pointed out by @sauer_oshan_rey_wolf_2021. They identified the underlying reason for the discrepancy noted above in the incorrect comparison of the analytical derivation of the expectations of the first two moments of $I_i$ based on the ``total'' randomization, and on conditional randomization (fixing the value of the variable at $i$). They point out that we confused the null hypothesis (``total'' versus ``conditional'') and methods of calculation (analytical versus simulation/permutation), and that @sokaletal:98 provide analytical formulae for both ways of specifying the null. They show clearly that analytical conditional randomization and simulation-based conditional approaches yield very similar outcomes. They generously contributed code to \pkg{spdep} and have included equivalent code in PySAL \code{esda.Moran\_Local()}. 
+
+While \code{spdep::localmoran()} used to use the analytical ``total`` null as default, the \code{conditional=} argument is now \code{TRUE} by default; legacy script output can be retrived by setting the argument to \code{FALSE}. Previously, the default of the \code{alternative=} argument was \code{"greater"} but has been changed to \code{"two.sided"} as more appropriate for local indicators.
+
+```{r}
+z |> 
+    localmoran(listw=lw_q_W, conditional=TRUE, alternative="two.sided") -> locm_c
+```
+
+
+```{r}
+locm_c |> 
+    subset(select="Pr(z != E(Ii))", drop=TRUE) |> 
+    pva() -> pvsp
+apply(pvsp, 2, f)
+```
+
+```{r localmoranZ}
+pol_pres15$locm_Z <- locm[, "Z.Ii"]
+pol_pres15$locm_c_Z <- locm_c[, "Z.Ii"]
+pol_pres15$locm_p_Z <- locm_p[, "Z.Ii"]
+tm_shape(pol_pres15) + tm_fill(c("locm_Z", "locm_c_Z", "locm_p_Z"), breaks=brks, midpoint=0, title="Standard deviates of\nLocal Moran's I") + tm_facets(free.scales=FALSE, ncol=2) + tm_layout(panel.labels=c("Analytical total", "Analytical conditional", "Conditional permutation"))
+```
+The figure shows that conditional analytical and permutation approaches scale back the proportion of standard deviate values taking extreme values, especially positive values. As we will see below, the analytical standard deviates of local Moran's $I$ should probably not be used if alternatives are available.
+
+In presenting local Moran's $I$, use is often made of "hotspot" maps. Because $I_i$ takes high values both for strong positive autocorrelation of low and high values of the input variable, it is hard to show where "clusters" of similar neighbours with low or high values of the input variable occur. The quadrants of the Moran plot are used, by creating a categorical quadrant variable interacting the input variable and its spatial lag split at 0 (**rgeoda** and PySAL/esda) or their means. While \code{mean(x - mean(x)) == 0}, this does not hold for the spatially lagged centred variable of interest in general, leading to differences in assignment of observations to quadrants.
+
+The quadrant categories are then set to NA if, for the chosen standard deviate and adjustment, $I_i$ would be considered insignificant. Here, for the conditional permutation standard deviates, Bonferroni adjusted, 14 observations belong to "Low-Low clusters", and 54 to "High-High clusters":
+
+```{r}
+q_mean <- attr(locm, "quadr")$mean
+pol_pres15$hs_ac_q <- pol_pres15$hs_cp_q <- pol_pres15$hs_an_q <- q_mean
+is.na(pol_pres15$hs_an_q) <- !(pol_pres15$locm_Z < brks[6] | pol_pres15$locm_Z > brks[8])
+is.na(pol_pres15$hs_cp_q) <- !(pol_pres15$locm_p_Z < brks[2] | pol_pres15$locm_p_Z > brks[12])
+is.na(pol_pres15$hs_ac_q) <- !(pol_pres15$locm_c_Z < brks[2] | pol_pres15$locm_c_Z > brks[12])
+```
+
+
+
+```{r Iihotspots}
+tm_shape(pol_pres15) + tm_fill(c("hs_an_q", "hs_ac_q", "hs_cp_q"), colorNA="grey95", textNA="Not significant", title="Turnout hotspot status\nLocal Moran's I") + tm_facets(free.scales=FALSE, ncol=2) + tm_layout(panel.labels=c("Unadjusted analytical total", "Bonferroni analytical cond.", "Cond. perm. with Bonferroni"))
+```
+The figure shows the impact of using analytical or conditional permutation standard deviates, and no or Bonferroni adjustment, reducing the counts of observations in "Low-Low clusters" from 370 to 14, and "High-High clusters" from 342 to 54; the "High-High clusters" are metropolitan areas.
+
+The local Getis-Ord $G$ measure is reported as a standard deviate, and may also take the $G^*$ form where self-neighbours are inserted into the neighbour object using `include.self()`. The observed and expected values of local $G$ with their analytical variances may also be returned if `return_internals=TRUE`. 
+
+```{r}
+system.time(z |> 
+        localG(lw_q_W) -> locG)
+```
+
+
+```{r}
+system.time(z |> 
+        localG_perm(lw_q_W, nsim=499, iseed=1) -> locG_p)
+```
+Once again we face the problem of multiple comparisons, with the count of areal unit p-values < 0.05 being reduced by an order of magnitude when employing Bonferroni correction:
+
+```{r}
+locG |> 
+    c() |> 
+    abs() |> 
+    pnorm(lower.tail = FALSE) |> 
+    (\(x) x*2)() |> 
+    pva() -> pvsp
+apply(pvsp, 2, f)
+```
+
+
+
+```{r localZvalues}
+library(ggplot2)
+p1 <- ggplot(data.frame(Zi=locm_c[,4], Zi_perm=locm_p[,4])) + geom_point(aes(x=Zi, y=Zi_perm), alpha=0.2) + xlab("Analytical conditional") + ylab("Permutation conditional") + coord_fixed() + ggtitle("Local Moran's I")
+p2 <- ggplot(data.frame(Zi=c(locG), Zi_perm=c(locG_p))) + geom_point(aes(x=Zi, y=Zi_perm), alpha=0.2) + xlab("Analytical conditional") + ylab("Permutation conditional") + coord_fixed() + ggtitle("Local G")
+gridExtra::grid.arrange(p1, p2, nrow=1)
+```
+
+The figure shows that, keeping fixed aspect in both panels, conditional permutation changes the range and distribution of the standard deviate values for $I_i$, but that for $G_i$, the two sets of standard deviates are equivalent.
+
+```{r}
+pol_pres15$locG_Z <- c(locG)
+pol_pres15$hs_G <- cut(c(locG), c(-Inf, brks[2], brks[12], Inf), labels=c("Low", "Not significant", "High"))
+table(pol_pres15$hs_G)
+```
+
+
+```{r localG}
+m1 <- tm_shape(pol_pres15) + tm_fill(c("locG_Z"), midpoint=0, title="Standard\ndeviate")
+m2 <- tm_shape(pol_pres15) + tm_fill(c("hs_G"), title="Bonferroni\nhotspot status")
+tmap_arrange(m1, m2, nrow=1)
+```
+
+As can be seen, we do not need to contrast the two estimation methods, and showing the mapped standard deviate is as informative as the "hotspot" status for the chosen adjustment. In the case of $G_i$, the values taken by the measure reflect the values of the input variable, so a "High cluster" is found for observations with high values of the input variable, here high turnout in metropolitan areas.
+
+
+## New **rgeoda**
+
+Very recently, Geoda has been wrapped for R as **rgeoda** [@rgeoda-package], and will provide very similar functionalities for the exploration of spatial autocorrelation in areal data as **spdep**. The active objects are kept as pointers to a compiled code workspace; using compiled code for all operations (as in Geoda itself) makes **rgeoda** perform fast, but leaves less flexible when modifications or enhancements are desired.
+
+The contiguity neighbours it constructs are the same as those found by `poly2nb()`, as almost are the $I_i$ measures. The difference is as established by @Bivand2018, that `localmoran()` calculates the input variable variance divinding by $n$, but Geoda uses $(n-1)$, as can be reproduced by setting `mlvar=FALSE`:
+
+```{r}
+library(rgeoda)
+system.time(Geoda_w <- queen_weights(pol_pres15))
+summary(Geoda_w)
+system.time(lisa <- local_moran(Geoda_w, pol_pres15["I_turnout"], 
+    cpu_threads=ifelse(parallel::detectCores() == 1, 1, parallel::detectCores()-1L), permutations=499, seed=1))
+all.equal(card(nb_q), lisa_num_nbrs(lisa), check.attributes=FALSE)
+all.equal(lisa_values(lisa), localmoran(pol_pres15$I_turnout, listw=lw_q_W, mlvar=FALSE)[,1], check.attributes=FALSE)
+```
+
+
+### R's `sessionInfo()`
+
+```{r sI, echo = TRUE}
+sessionInfo()
+```

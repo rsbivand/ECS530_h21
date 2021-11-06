@@ -1,0 +1,1221 @@
+---
+title: "ECS530: Spatial Data Analysis IV"
+author: "Roger Bivand"
+date: "Thursday 18 November 2021"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    toc_depth: 2
+theme: united
+bibliography: ecs530_21.bib
+link-citations: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Copyright
+
+All the material presented here, to the extent it is original, is available under [CC-BY-SA](https://creativecommons.org/licenses/by-sa/4.0/). Parts build on joint tutorials with Edzer Pebesma.
+
+### Required current contributed CRAN packages:
+
+I am running R 4.1.2, with recent `update.packages()`.
+
+```{r, echo=TRUE}
+needed <- c("sphet", "coda", "spatialreg", "spData", "sf")
+```
+
+### Script
+
+Script and data at https://github.com/rsbivand/ECS530_h21/raw/main/ECS530_211118.zip. Download to suitable location, unzip and use as basis.
+
+
+# Background to spatial econometrics
+
+## Antecedents
+
+In the same way that @fujitaetal:99 begin their study of the
+spatial economy by looking at the antecedents of their subject, it
+is helpful to place spatial econometrics in its temporal and academic
+context. This context is sufficiently different from the contemporary
+setting that it may be hard to grasp the background for many of the
+features of spatial econometrics that came into being during its earlier
+years. Indeed, the ranges of topics that were studied in economics in
+the 1960's and 1970's differ markedly from those in focus today. If we
+can sketch the context within which spatial econometrics was created,
+and its methods developed, we should be able to illuminate choices
+made then which influence our understanding and application of spatial
+econometric methods.
+
+Critics of the practice of spatial econometrics, such as
+@gibbons+overman:12, appear to overlook these antecedents, and
+consequently judge the potential of the field on a partial, perhaps
+anachronistic, understanding, viewing phenomena with a history in
+ahistorical way. Since we are attempting to provide an introduction to
+applied spatial econometrics, we need to throw light on the original
+motivations and concerns of the first scholars engaged in the field.
+@anselin:10 indicates clearly and repeatedly [@anselin:88;
+anselin:06; anselin:10a] that we should acknowledge *Spatial
+Econometrics* by @paelinck+klaassen:79 of the Netherlands Economic
+Institute as our starting point, and so celebrates thirty years of
+spatial econometrics in 2009. This firm confirmation of the importance
+of Jean Paelinck's contributions as scholar and community-builder
+is fully justified. We should then turn to the motivations given in
+@paelinck+klaassen:79 to indicate which contextual factors were
+of importance at that time, and the breadth of the academic communities
+with which they were in contact.
+
+In a recent short commentary, @paelinck:13 recalls his
+conviction, expressed in 1967, that "early econometric exercises $\ldots$
+relating only variables possessing the same regional index $\ldots$ were
+inadequate to represent the correct spatial workings of the economy,
+which would then be reflected in the policy outcomes." A year before,
+@paelinck:12 points to salient isomorphisms linking
+spatial regression models, simultaneous equation models and input-output
+models; these were known of and discussed in the early formative period
+of spatial econometrics. We will return in subsequent chapters to the
+ways in which spatial regression models may be specified, but for now,
+a simple presentation of these isomorphisms as perceived in the early
+period is sufficient:
+
+\[
+{\mathbf y} = {\mathbf A}{\mathbf y} + {\mathbf X}{\mathbf b} + {\mathbf \varepsilon}
+\]
+
+is a spatial regression model where ${\mathbf A}$ is a matrix expressing
+the mutual first order spatial dependencies between regions --- the
+similarity of this form and the Koyck distributed lag model is striking
+[@koyck:54; @klein:58; @griliches:67};
+
+\[
+{\mathbf A}{\mathbf y} + {\mathbf X}{\mathbf b} = {\mathbf \varepsilon}
+\]
+
+is a simultaneous equation model where ${\mathbf A}$ is a matrix expressing the dependencies between the equations; and:
+
+\[
+{\mathbf y} = {\mathbf A}{\mathbf y} + {\mathbf f}
+\]
+
+is an input-output model where ${\mathbf A}$ is a matrix of sectoral 
+input-output coefficients, and ${\mathbf f}$ is final demand.
+
+Input-output models, simultaneous equation models, and the importance of
+policy outcomes were all known intimately at the Netherlands Economic
+Institute at this time, and elsewhere among applied economists. The
+isomporhisms flowed from the known to the unknown, from the stuff of
+contemporary research and policy advice to doubts about the calibration
+of aspatial models, and on to what became termed spatial econometrics. If
+we compare these topics with those described for Regional Science by
+@boyce:04, we can see the outlines of research priorities at the
+time: including urban and regional models for planning, regional and
+interregional input-output models, transport and location models. During
+the 1960s and 1970s, many of these models were enhanced --- matching needs
+for policy advice --- to cover environmental questions, adding natural
+resources as inputs and pollution to outputs. Paelinck's co-author in a
+key paper in spatial econometrics [@hordijk+paelinck:76], went on
+to work in environmental management and research.
+
+Reading @paelinck+klaassen:79, we see that the programme
+of research into the space economy undertaken at the Netherlands Economic
+Institute led first to the publication of @paelinck+nijkamp:75,
+and then to @klaassenetal:79, published in the same year as
+**Spatial Econometrics**. All three books were published in the
+same series and appear to reflect the core concerns of economists at
+the Institute doing research on regionalised national macro-economic
+models. The direct link to Jan Tinbergen is evident in the account
+of the context of economic research in the Netherlands given by
+@theil:64. If we take Paelinck at his word, he and
+his colleagues were aware that an aspatial regionalisation of national
+accounts, of input-output models, or transport models, might prejudice
+policy advice and outcomes through inadequate and inappropriate
+calibration.
+
+@klaassenetal:79 is mainly concerned with model construction, while
+about a third of @paelinck+nijkamp:75 is devoted to input-output
+analysis. Both books show sustained concern for economic measurement,
+especially of national accounts data, intersectoral transactions, and many
+other topics. Considerable attention is also paid to the data collection
+units, be they sectors or regions.  The need to attempt to define regions
+that match the underlying economic realities was recognised clearly, and
+a key part of @paelinck+nijkamp:75 is devoted to regionalisation,
+and the distinction between functional regions and homogeneous regional
+classifications is made. In the motivation for spatial econometric
+models given in @paelinck+klaassen:79, consumption
+and investment in a region are modelled as depending on income both in
+the region itself and in its contiguous neighbours, termed a "spatial
+income-generating model." It became important to be able to calibrate
+planning models of this kind to provide indications of the possible
+outcomes of alternative policy choices, hence the need for spatial
+econometrics.
+
+Economic planning was widespread in Europe at the time, and was also
+central in the development of Regional Science, in particular input-output
+models; as @boyce:04 recounts, Walter Isard worked closely with
+Wassily Leontief. Operational and planning motivations for applied
+economics were unquestioned, as economists in the post-war period saw
+their role, beyond educating young economists, as providing rational
+foundations for economic policy. It is worth noting that Jean Paelinck
+participated actively in the Association de Science Régionale De Langue
+Française, becoming president in 1973--1976. The first president of
+the association was François Perroux, who had founded it with Walter
+Isard in 1961 [@baillyetal:12].
+
+Until the 1980s, it was not at all unusual to publish original
+results in other languages than English. French spatial economic
+research, for example @ponsard:83, while making little impact
+in Anglophone countries, was widely used in teaching and research
+elsewhere [@billot+thisse:92]. They contrast, though, the "word
+wizardry of François Perroux with the rigour of Claude Ponsard"
+[@billot+thisse:92], echoing the views expressed by
+@dreze:64 with regard to the work of Perroux. Even
+if we accept that "word wizardry" deserves more rigour and recasting
+in normative and empirically testable forms, it is also part of the
+context within which spatial econometrics came into being. A reading of
+@perroux:50 is worthwhile,
+because it not only gives the reader a vignette of the context in
+the post-war period, but also provides a discussion of economic space,
+as opposed to banal, unreflected space --- mere position --- that has
+largely disappeared from our considerations.
+
+The title of the journal: *Regional and Urban Economics, Operational Methods* , founded by Jean Paelinck in 1971, and which
+was renamed as *Regional Science and Urban Economics* in 1975
+[@boyce:04], points to the perceived importance of
+"operational methods", a version of the term "operational theory
+and method" used in the title of @paelinck+nijkamp:75. Spatial
+econometrics does not seem to have come into being as a set of estimation
+techniques as such, as perhaps we might think today, but rather as
+an approach addressing open research questions both in space economy
+and in the enhancement of interregional models to be used in offering
+policy advice.
+
+Were motivations of this kind common during the 1960s and early
+1970s? Not only was the spread of Regional Science extensive and
+firmly established [@boyce:04], but public bodies were concerned
+to regionalise economic measurement and policy advice [@graham+romans:71]. In Britain, *Environment
+and Planning* was started in 1969 with Alan Wilson as founding
+editor and published by Pion; he was assistant director at the
+Centre for Environmental Studies at this time before moving to
+the University of Leeds. In a recently published lecture series,
+@wilson:12 cites @paelinck+nijkamp:75 as
+giving principles for contributions from economics to urban and regional
+analysis [@wilson:00].  The papers presented at
+annual Regional Science meetings were published in a series by Pion; the
+first number in the series included contributions by @granger:69
+and @cliff+ord:69.
+
+In a contribution to a panel session at the 2006 annual meeting of
+the American Association of Geographers (co-panelists Luc Anselin
+and Daniel Griffith), Keith Ord pointed to the continued relevance
+of Granger's remarks at the meeting almost forty years earlier
+[@ord:10]; we will return to these concerns below. As
+noted by @bivand:08, communities of researchers working
+in and near mathematical and theoretical geography was more integrated
+in the pre-internet and pre-photocopier age than one might expect, with
+duplicated working papers prepared using stencils circulating rapidly
+between collaborating academic centres. Knowledge of the preliminary
+results of other researchers then fed through into rapid innovation
+in an exciting climate for those with access to these meetings and
+working papers.
+
+There was considerable overlap between quantitative geography and
+regional science, so that work like @cliff+ord:69 is cited by
+@hordijk:74, and was certainly known at the Netherlands Economic
+Institute several years earlier. Although it has not been possible
+to find out who participated in the August 1968 conference of the
+British and Irish Section of the Regional Science Association at which
+@cliff+ord:69 was read, it was not unusual for members of other
+sections to be present, and to return home with bundles of duplicated
+papers. Up to the 1990s, presenters at conferences handed out copies of
+their papers, and conference participants posted home parcels of these
+hand-outs, indexed using the conference programme.
+
+Leslie Hepple was among the more thorough scholars working on the
+underpinnings of spatial econometrics prior to the publication of
+@paelinck+klaassen:79. His wide-ranging review [@hepple:74]
+is cited by @bartels+hordijk:77, again demonstrating the close
+links between those working in this field. We will be returning to
+the review paper, and to @hepple:76, which studies methods of
+estimation for spatial econometrics models in some depth, building on
+and extending @ord:75.
+
+@hepple:74, like @cliff+ord:73, saw no distinction between
+spatial statistics and the antecedents to spatial econometrics. Obviously,
+spatial econometrics was strongly influenced by the research tasks
+undertaken by regional and urban economists and regional scientists. As
+@griffith+paelinck:07 point out, spatial statistics and
+spatial econometrics continue to share most topics of interests, with each
+also possessing shorter lists of topics that have been of less concern to
+the other. They advocate a "non-standard" spatial econometrics, which
+is inclusive to wider concerns. It seems appropriate in this context to
+mention the somewhat heterodox position taken by @mcmillen:10,
+who draws attention to the crucial issue of functional form, which he
+argues may well lie behind observed spatial autocorrelation; we will
+return to this in later chapters.
+
+## Implementing methods in econometrics
+
+Having described some of the contextual issues suggesting how specific
+research concerns influenced how spatial econometrics came into being,
+it may now be helpful to turn to broader econometrics. It will become
+clearer that the research concerns of broader econometrics at that time,
+apart from spatial interdependence and interaction, were generally
+similar to those of spatial econometrics. Indeed, econometrics and the
+provision of national economic data for analysis, modelling, and for the
+provision of policy advice were intimately linked, as were mathematical
+economics and econometrics. The place of econometrics within economics, as
+@sandmo:11 shows, was a matter of some contention
+from the very beginning.
+
+Both @morgan:90 and @qin:93
+conclude their historical accounts of the beginnings of econometrics
+in pessimistic ways. Econometrics had begun by addressing a range of
+research topics, including the expression of economic theories in
+mathematical form, the building of operational econometric models,
+the exploration of testing and estimation techniques, and statistical
+data preparation. "By the 1950s the founding ideal of econometrics, the
+union of mathematical and statistical economics into a truly synthetic
+economics, had collapsed" [@morgan:90]. The flavour of
+@paelinck+klaassen:79 seems somewhat anachronistic compared to late
+1950s and early 1960s "textbook" econometrics. One might conclude that
+while spatial econometrics was aligned with Haavelmo's probabilistic
+revolution [@qin:93], it retained, like Haavelmo,
+adherence to the founding ideals [@bjerkholt:07;
+hendry+johansen:12].
+
+It appears from the research programme culminating in
+@paelinck+klaassen:79 that spatial econometrics could be seen as
+"creative juggling in which theory and data came together to find out
+about the real world" [@morgan:90]. @morgan:90 and
+@qin:93 indicate that, from the 1950s, the depth of econometrics
+was flattened , with "[D]ata taken less seriously as a source of ideas
+and information for econometric models, and the theory-development role
+of applied econometrics was downgraded to the theory-testing role"
+[@morgan:90]. The history of econometric ideas is
+of assistance in illuminating key components of what has come to be the
+practice of spatial econometrics:
+
+> With Haavelmo, the profession seemed to have arrived at a consensus:
+a statistical model of plural economic causes and errors in the
+relations. But in the meantime, the old scientific ideal had also changed,
+from a deterministic to a probabilistic view of the way the world
+worked. This left the explanatory level of Haavelmo's model open to new
+doubts. Was it really based on underlying random behaviour of the economic
+variables (as in contemporary evolutionary biology and quantum mechanics),
+or was it, after all, only a convenient way of formally dealing with
+inference in the non-experimental framework? [@morgan:90].
+
+The study of the history of econometrics has been actively promoted
+by David Hendry. It is desirable to motivate our choice of the term
+"applied spatial econometrics"; to do this we turn to @hendry:09,
+the introductory chapter in the "Applied Econometrics" volume of the
+Palgrave Handbook of Econometrics. If we can shed light on how "applied
+econometrics" is understood, then we may be able to provide adequate
+underpinnings for what is to follow. This, however, turns out to be hard
+to do, as Hendry challenges simple definitions:
+
+> At the superficial level, "Applied Econometrics" is "any application
+of econometrics, as distinct from theoretical econometrics.  $\ldots$ Some
+applied econometricians would include any applications involving analyses
+of "real economic data" by econometric methods, making "Applied
+econometrics" synonymous with empirical econometrics. However, such
+a view leads to demarcation difficulties from applied economics on the
+one hand, and applied statistics on the other.  $\ldots$ Outsiders might
+have thought that "Applied Econometrics" was just the application of
+econometrics to data, but that is definitely not so $\ldots$ Rather, the
+notion of mutual penetration dominates, but as a one-way street. Economic
+theory comes first, almost mandatorially. Perhaps this just arises from
+a false view of science, namely that theory precedes evidence, $\ldots$
+[@hendry:09].
+
+He butresses his views using the history of econometrics to caricature
+empirical econometric research in the light of his view that applied
+economics has a "false" view of science:
+
+> $\ldots$ cumulative critiques $\ldots$ led to an almost monolithic
+approach to empirical econometric research: first postulate an
+individualistic, intertemporal optimization theory; next derive a
+model therefrom; third, find data with the same names as the theory
+variables; then select a recipe from the econometrics cookbook that
+appropriately blends the model and the data, or if necessary, develop
+another estimator; finally report the newly forged economic law.  $\ldots$
+Instead of progress, we find fashions, cycles and "schools" in research.
+$\ldots$ At about the same time that *a priori* theory-based
+econometrics became dominant, data measurement and quality issues
+were also relegated as a central component of empirical publications
+[@hendry:09].
+
+Hendry's scepticism with regard to the practice of applied econometrics
+finds ample support in the proposal by @andersonetal:08 that
+econometric results be acknowledged only to the extent that they
+are open for replication. They point out that theoretical results in
+economics (and econometrics) are much easier to check, and that referees
+routinely question formal proofs, because the relevant equations
+are included in journal submissions. Further contributions to the
+discussion on reproducible econometric research results have been made
+by @koenker+zeileis:09 and @yalta+yalta:10. As we will see
+later on, spatial econometrics is in the fortunate position of having
+relatively many open source software implementations.
+
+In order to complete this brief review of the antecedents to spatial
+econometrics, it makes sense to point to descriptions of the
+development of econometric software. Both in a handbook chapter
+[@renfro:09a], and in book form [@renfro:09], we can benefit
+from Charles Renfro's experience and insights. He does admit to
+expressing distinct views, but they are backed both by experience and
+evidence. One concern is that econometric software development has been
+seen less and less as academic achievement, but rather as a practical,
+technical concern only:
+
+> To take an interest in programming and econometric software development
+would seem therefore to be the graveyard of any academic economist’s
+professional ambitions, justifiable only as a minimally diverting hobby,
+spoken of only to trusted colleagues. [@renfro:09]
+
+He is not alone in drawing attention to the view that economics suffers
+from a skewed distribution of attention to the actual components
+of knowledge creation, placing theory firmly in first place, with
+commensurately much less weight given to measurement, data preparation
+and programming. As he says, applied economics researchers would benefit
+from a more even distribution of academic acknowledgement to those who, in
+terms of the division of labour within the discipline, develop software:
+
+> As a software developer, the econometrician who incorporates new
+theoretical econometric results may therefore be faced with the
+often-difficult task of not only evaluating the relevance, hence the
+operational validity of the theoretical solution, but also implementing
+these results in a way that is contextually meaningful. This operationally
+focused econometrician consequently not only needs to understand the
+theoretical advances that are made but also to exercise independent
+judgment in the numerical implementation of new techniques, for in
+fact neither are blueprints provided nor are the building blocks
+prefabricated. [@renfro:09]
+
+Since this division of labour is arguably more uneven in economics than
+in other subjects, it leads to the restriction of research questions that
+applied economists can address to those that match estimation functions
+available in software implementations for which they have licences and
+which they know how to use:
+
+> One of the consequences of this specialization has been to introduce
+an element of user dependence, now grown to a sufficiently great degree
+that for many economists whichever set of econometric operations can be
+performed by their choice of program or programs has for them in effect
+become the universal set. [@renfro:09]
+
+This deplorable situation has arisen over time, and certainly did not
+characterise the research context when spatial econometrics came into
+being. At that time, graduate students simply regarded learning to
+program, often in Fortran, as an essential part of their preparation as
+researchers. This meant that researchers were moch "closer" to their
+tools, and could adapt them to suit their research needs. Nowadays,
+few economists feel confident as programmers despite the fact that
+modern high-level languages such as Matlab, Python, or R are easy to
+learn and very flexible, and many econometric and statistical software
+applications offer scripting languages (such as SAS, Stata, SPSS and
+specifically econometric programs).
+
+> The links between methodological advance and the evolution of spatial
+economic theory are only touched upon in @anselin:10 --- in
+that sense, his review is concerned with theoretical *spatial
+econometrics* (statistical methods) rather than applied *spatial
+econometrics* (economic models). Over time, applied *spatial
+econometrics* has tended to become synonymous with *regression
+modelling* applied to spatial data where *spatial autocorrelation*
+and spatial *heterogeneity* in particular are present and need to
+be accommodated. Its treatment of spatial effects reflects the growing
+"legitimization of space and geography" [@anselin:10]
+in the quantitative social sciences more generally. But the subfield
+perhaps needs to be more than that if it is to justify its separate
+identity from spatial statistics and fully justify its "econometric"
+label. A close link with mainstream economic theory would seem essential
+in order to provide economic legitimacy to models (systems of equations)
+within which geography and spatial relationships have been, in economic
+terms, rigorously embedded [@fingleton:00]. [@haining:14]
+
+
+# Introduction
+
+- Beyond software functionality, the existence of communities of interest becomes important
+
+- These extend the choices available, and bring in points of view across applied scientific domains and in modern computation, for example interworking across C++, Python and Julia with R
+
+- For example, the **HSAR** package [@dong+harris:15; dongetal:15] uses C++ extensively, rather than R sparse matrix packages
+
+- The \code{slm} model being introduced into **INLA** for non-MCMC Bayesian inference is another example of cooperation with other applied statisticians
+
+- The R packages **spatialreg**, **sphet** [@bivand+piras:15] and for spatial panel models **splm** [@millo+piras:12] provide implementations of many model fitting functions for Gaussian dependent variables
+
+- These also use shared methods in **spdep** for computing impacts, and for MC inference on impacts
+
+- There are a range of fitting functions for non-Gaussian dependent variables in **McSpatial**, **spatialprobit** [@RJ-2013-013] and **ProbitSpatial** [@MARTINETTI201730], and these are also available using the ´slm´ model being introduced into **INLA** [@G_mez_Rubio_2021]
+
+- Work is continuing on providing Bayesian inference functions, through MCMC and otherwise; the **HSAR** package is an example
+
+- See @math9111276 for a recent survey
+
+
+
+# Spatial Regression
+
+Even though it may be tempting to focus on interpreting the map pattern of an area support response variable of interest, the pattern may largely derive from covariates (and their functional forms), as well as the respective spatial footprints of the variables in play. Spatial autoregressive models in two dimensions began without covariates and with clear links to time series [@whittle:54]. Extensions included tests for spatial autocorrelation in linear model residuals, and models applying the autoregressive component to the response or the residuals, where the latter matched the tests for residuals [@CliffOrd:72; @cliff+ord:73]. These "lattice" models of areal data typically express the dependence between observations using a graph of neighbours in the form of a contiguity matrix. 
+
+A division has grown up, possibly unhelpfully, between scientific fields using conditional autoregressive (CAR) models [@besag:74], and simultaneous autoregressive models (SAR) [@ord:75; @hepple:76]. Although CAR and SAR models are closely related, these fields have found it difficult to share experience of applying similar models, often despite referring to key work summarising the models [@ripley:81; @ripley:88; @Cressie:1993]. Ripley gives the SAR variance as [-@ripley:81, page 89]:
+
+$$
+{\rm Var}_S = \sigma^ 2(I-\lambda W_S)^{-1} (I-\lambda W_S^{\rm
+T})^{-1}
+$$
+where $\lambda$ is a spatial autocorrelation parameter and $W_S$ is a nonsingular matrix that represents spatial dependence. The CAR variance is:
+
+$$
+{\rm Var}_C = \sigma^ 2(I-\lambda W_C)^{-1}
+$$
+where and $W_C$ is a symmetric and strictly positive definite matrix
+
+More recent books expounding the theoretical bases for modelling with areal data simply point out the similarities in relevant chapters [@gaetan+guyon:10; @vanlieshout:19]; the interested reader is invited to consult these sources for background information and examples using the functions described below.
+
+Of course, handling a spatial correlation structure in a generalised least squares model or a (generalised) linear or nonlinear mixed effects model such as those provided in the **nlme** and many other packages does not have to use a graph of neighbours [@R:Pinheiro+Bates:2000]. These models are also spatial regression models, using functions of the distance between observations, and fitted variograms to model the spatial autocorrelation present; such models have been held to yield a clearer picture of the underlying processes [@wall:04], building on geostatistics. For example, the **glmmTMB** package successfully uses this approach to spatial regression [@brookesetal:17]. Here we will only consider spatial regression using spatial weights, chiefly as implemented in the **spatialreg** package recently split out of the **spdep** package which had grown unnecessarily large, covering too many aspects of spatial dependence.
+
+Recent development: [@math9111276]
+
+## Spatial regression with spatial weights
+
+Spatial autoregression models using spatial weights matrices were described in some detail using maximum likelihood estimation some time ago [@cliff+ord:73; @cliff+ord:81]. A family of models were elaborated in spatial econometric terms extending earlier work, and in many cases using the simultaneous autoregressive framework and row standardization of spatial weights [@a88]. The simultaneous  and conditional autoregressive frameworks can be compared, and both can be supplemented using case weights to reflect the relative importance of different observations [@WallerGotway:2004].
+
+Here we shall use the Boston housing data set, which has been restructured and furnished with census tract boundaries [@bivand17]. The original data set used 506 census tracts and a hedonic model to try to estimate willingness to pay for clean air. The response was constructed from counts of ordinal answers to a 1970 census question about house value; the response is left and right censored in the census source. The key covariate was created from a calibrated meteorological model showing the annual nitrogen oxides (NOX) level for a smaller number of model output zones. The numbers of houses responding also varies by tract and model output zone. There are several other covariates, some measured at the tract level, some by town only, where towns broadly correspond to the air pollution model output zones.
+
+```{r}
+library(sf)
+library(spatialreg)
+```
+```{r}
+boston_506 <- st_read(system.file("shapes/boston_tracts.shp", package="spData")[1])
+```
+```{r}
+nb_q <- spdep::poly2nb(boston_506)
+lw_q <- spdep::nb2listw(nb_q, style="W")
+```
+We can start by reading in the 506 tract data set from **spData**, and creating a contiguity neighbour object and from that again a row standardized spatial weights object. If we examine the median house values, we find that they have been assigned as missing values, and that 17 tracts are affected.
+
+```{r}
+table(boston_506$censored)
+```
+```{r}
+summary(boston_506$median)
+```
+Next, we can subset to the remaining 489 tracts with non-censored house values, and the neighbour object to match. The neighbour object now has one observation with no neighbours.
+
+```{r}
+boston_506$CHAS <- as.factor(boston_506$CHAS)
+boston_489 <- boston_506[!is.na(boston_506$median),]
+nb_q_489 <- spdep::poly2nb(boston_489)
+lw_q_489 <- spdep::nb2listw(nb_q_489, style="W", zero.policy=TRUE)
+```
+The `NOX_ID` variable specifies the upper level aggregation, letting us aggregate the tracts to air pollution model output zones. We can create aggregate neighbour and row standardized spatial weights objects, and aggregate the `NOX` variable taking means, and the `CHAS` Charles River dummy variable for observations on the river.
+
+```{r}
+agg_96 <- list(as.character(boston_506$NOX_ID))
+boston_96 <- aggregate(boston_506[, "NOX_ID"], by=agg_96, unique)
+nb_q_96 <- spdep::poly2nb(boston_96)
+lw_q_96 <- spdep::nb2listw(nb_q_96)
+boston_96$NOX <- aggregate(boston_506$NOX, agg_96, mean)$x
+boston_96$CHAS <- aggregate(as.integer(boston_506$CHAS)-1, agg_96, max)$x
+```
+The response is aggregated using the `weightedMedian()` function in **matrixStats**, and midpoint values for the house value classes. Counts of houses by value class were punched to check the published census values, which can be replicated using `weightedMedian()` at the tract level. Here we find two output zones with calculated weighted medians over the upper census question limit of USD 50,000, and remove them subsequently as they also are affected by not knowing the appropriate value to insert for the top class by value.
+
+```{r}
+nms <- names(boston_506)
+ccounts <- 23:31
+for (nm in nms[c(22, ccounts, 36)]) {
+  boston_96[[nm]] <- aggregate(boston_506[[nm]], agg_96, sum)$x
+}
+br2 <- c(3.50,  6.25,  8.75, 12.50, 17.50, 22.50, 30.00, 42.50, 60.00)*1000
+counts <- as.data.frame(boston_96)[, nms[ccounts]]
+f <- function(x) matrixStats::weightedMedian(x=br2, w=x, interpolate=TRUE)
+boston_96$median <- apply(counts, 1, f)
+is.na(boston_96$median) <- boston_96$median > 50000
+summary(boston_96$median)
+```
+Before subsetting, we aggregate the remaining covariates by weighted mean using the tract population counts punched from the census [@bivand17].
+
+```{r, echo=FALSE}
+POP <- boston_506$POP
+f <- function(x) matrixStats::weightedMean(x[,1], x[,2])
+for (nm in nms[c(9:11, 14:19, 21, 33)]) {
+  s0 <- split(data.frame(boston_506[[nm]], POP), agg_96)
+  boston_96[[nm]] <- sapply(s0, f)
+}
+```
+```{r}
+boston_94 <- boston_96[!is.na(boston_96$median),]
+nb_q_94 <- spdep::subset.nb(nb_q_96, !is.na(boston_96$median))
+lw_q_94 <- spdep::nb2listw(nb_q_94, style="W")
+```
+
+We now have two data sets each at the lower, census tract level and the upper, air pollution model output zone level, one including the censored observations, the other excluding them.
+
+The original model related the log of median house values by tract to the square of NOX values, including other covariates usually related to house value by tract, such as aggregate room counts, aggregate age, ethnicity, social status, distance to downtown and to the nearest radial road, a crime rate, and town-level variables reflecting land use (zoning, industry), taxation and education [@bivand17]. This structure will be used here to exercise issues raised in fitting spatial regression models, including the presence of multiple levels.
+
+```{r}
+form <- formula(log(median) ~ CRIM + ZN + INDUS + CHAS + I((NOX*10)^2) + I(RM^2) + 
+                  AGE + log(DIS) + log(RAD) + TAX + PTRATIO + I(BB/100) + 
+                  log(I(LSTAT/100)))
+```
+
+Before moving to presentations of issues raised in fitting spatial regression models, it is worth making a few further points. A recent review of spatial regression in a spatial econometrics setting is given by Kelejian and Piras [-@kelejian+piras:17]; note that their usage is to call the spatial coefficient of the lagged response $\lambda$ and that of the lagged residuals $\rho$, the reverse of other usage  [@a88; @lesage+pace:09]; here we use $\rho_{\mathrm{Lag}}$ for the spatial coefficient in the spatial lag model, and $\rho_{\mathrm{Err}}$ for the spatial error model. One interesting finding is that relatively dense spatial weights matrices may downweight model estimates, suggesting that sparser weights are preferable [@smith:09]. Another useful finding is that the presence of residual spatial autocorrelation need not bias the estimates of variance of regression coefficients, provided that the covariates themselves do not exhibit spatial autocorrelation [@smith+lee12]. In general, however, the footprints of the spatial processes of the response and covariates may not be aligned, and if covariates and the residual are autocorrelated, it is likely that the estimates of variance of regression coefficients will be biassed downwards if attempts are not made to model the spatial processes.
+
+In trying to model these spatial processes, we may choose to model the spatial autocorrelation in the residual with a spatial error model (SEM). 
+
+$$
+{\mathbf y} = {\mathbf X}{\mathbf \beta} + {\mathbf u},
+\qquad {\mathbf u} = \rho_{\mathrm{Err}} {\mathbf W} {\mathbf u} + {\mathbf \varepsilon},
+$$
+where ${\mathbf y}$ is an $(N \times 1)$ vector of observations on a response variable taken  at each of $N$ locations, ${\mathbf X}$ is an $(N \times k)$ matrix of covariates, ${\mathbf \beta}$ is a $(k \times 1)$ vector of parameters, ${\mathbf u}$ is an $(N \times 1)$ spatially autocorrelated disturbance vector, ${\mathbf \varepsilon}$ is an $(N \times 1)$ vector of independent and identically distributed disturbances and $\rho_{\mathrm{Err}}$ is a scalar spatial parameter.
+
+If the processes in the covariates and the response match, we should find little difference between the coefficients of a least squares and a SEM, but very often they diverge, suggesting that a Hausman test for this condition should be employed [@pace+lesage:08]. This may be related to earlier discussions of a spatial equivalent to the unit root and cointegration where spatial processes match [@fingleton:99].
+
+A model with a spatial process in the response only is termed a spatial lag model (SLM, often SAR - spatial autoregressive) [@lesage+pace:09]. 
+
+$$
+{\mathbf y} = \rho_{\mathrm{Lag}} {\mathbf W}{\mathbf y} + {\mathbf X}{\mathbf \beta} + {\mathbf \varepsilon},
+$$
+where $\rho_{\mathrm{Lag}}$ is a scalar spatial parameter.
+
+Work reviewed by Mur and Angulo [-@mur+angulo:06] on the Durbin model; the Durbin model adds the spatially lagged covariates to the covariates included in the spatial lag model, giving a spatial Durbin model (SDM) with different processes in the response and covariates: 
+
+$$
+{\mathbf y} = \rho_{\mathrm{Lag}} {\mathbf W}{\mathbf y} + {\mathbf X}{\mathbf \beta} + {\mathbf W}{\mathbf X}{\mathbf \gamma} + {\mathbf \varepsilon},
+$$
+where ${\mathbf \gamma}$ is a $(k' \times 1)$ vector of parameters. $k'$ defines the subset of the intercept and covariates, often $k' = k-1$ when using row standardised spatial weights and omitting the spatially lagged intercept.
+
+This permits the spatial processes to be viewed and tested for as a Common Factor [@burridge:81; @bivand:84]. The inclusion of spatially lagged covariates lets us check whether the same spatial process is manifest in the response and the covariates (SEM), whether they are different processes, or whether no process is detected. The Common Factor is present when ${\mathbf \gamma} = - \rho_{\mathrm{Lag}} {\mathbf \beta}$:
+
+$$
+{\mathbf y} = \rho_{\mathrm{Lag}} {\mathbf W}{\mathbf y} + {\mathbf X}{\mathbf \beta} - \rho_{\mathrm{Lag}} {\mathbf W}{\mathbf X} {\mathbf \beta} + {\mathbf \varepsilon},
+\qquad ({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W}){\mathbf y} = ({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W}) {\mathbf X}{\mathbf \beta} + {\mathbf \varepsilon},
+$$
+where ${\mathbf I}$ is the $N \times N$ identity matrix, and ${\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W}$ is the Common Factor:
+
+$$
+\qquad {\mathbf y} = {\mathbf X}{\mathbf \beta} + ({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W})^{-1} {\mathbf \varepsilon},
+\qquad {\mathbf y} = {\mathbf X}{\mathbf \beta} + {\mathbf u},
+\qquad {\mathbf u} = \rho_{\mathrm{Err}} {\mathbf W} {\mathbf u} + {\mathbf \varepsilon},
+$$
+
+If we extend this family with processes in the covariates and the residual, we get  a spatial error Durbin model (SDEM). If it is chosen to admit a spatial process in the residuals in addition to a spatial process in the response, again two models are formed, a general nested model (GNM) nesting all the others, and a model without spatially lagged covariates (SAC, also known as SARAR - Spatial AutoRegressive-AutoRegressive model). If neither the residuals nor the residual are modelled with spatial processes, spatially lagged covariates may be added to a linear model, as a spatially lagged X model (SLX) [@elhorst:10; @bivand:12; @lesage:14; @halleck-vega+elhorst:15]. 
+
+We can write the general nested model (GNM) as:
+
+$$
+{\mathbf y} = \rho_{\mathrm{Lag}} {\mathbf W}{\mathbf y} + {\mathbf X}{\mathbf \beta} + {\mathbf W}{\mathbf X}{\mathbf \gamma} + {\mathbf u},
+\qquad {\mathbf u} = \rho_{\mathrm{Err}} {\mathbf W} {\mathbf u} + {\mathbf \varepsilon},
+$$
+
+This may be constrained to the double spatial coefficient model SAC/SARAR by setting ${\mathbf \gamma} = 0$, to the spatial Durbin (SDM) by setting $\rho_{\mathrm{Err}} = 0$, and to the error Durbin model (SDEM) by setting $\rho_{\mathrm{Lag}} = 0$. Imposing more conditions gives the spatial lag model (SLM) with ${\mathbf \gamma} = 0$ and $\rho_{\mathrm{Err}} = 0$, the spatial error model (SEM) with ${\mathbf \gamma} = 0$ and $\rho_{\mathrm{Lag}} = 0$, and the spatially lagged X model (SLX) with $\rho_{\mathrm{Lag}} = 0$ and $\rho_{\mathrm{Err}} = 0$.
+
+Although making predictions for new locations for which covariates are observed was raised as an issue some time ago, it has many years to make progress in reviewing the possibilities [@bivand:02; @goulardetal:17]. The prediction methods for SLM, SDM, SEM, SDEM, SAC and GNM models fitted with maximum likelihood were contributed as a Google Summer of Coding project by Martin Gubri. This work, and work on similar models with missing data [@suesse:18] is also relevant for exploring censored median house values in the Boston data set. Work on prediction also exposed the importance of the reduced form of these models, in which the spatial process in the response interacts with the regression coefficients in the SLM, SDM, SAC and GNM models. 
+
+The consequence of these interactions is that a unit change in a covariate will only impact the response as the value of the regression coefficient if the spatial coefficient of the lagged response is zero. Where it is non-zero, global spillovers, impacts, come into play, and these impacts should be reported rather than the regression coefficients [@lesage+pace:09; @elhorst:10; @bivand:12; @lesage:14; @halleck-vega+elhorst:15]. Local impacts may be reported for SDEM and SLX models, using linear combination to calculate standard errors for the total impacts of each covariate (sums of coefficients on the covariates and their spatial lags).
+
+This can be seen from the GNM data generation process:
+
+$$
+({\mathbf I} - \rho_{\mathrm{Err}} {\mathbf W})({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W}){\mathbf y} = ({\mathbf I} - \rho_{\mathrm{Err}} {\mathbf W})({\mathbf X}{\mathbf \beta} + {\mathbf W}{\mathbf X}{\mathbf \gamma}) + {\mathbf \varepsilon},
+$$
+re-writing:
+
+$$
+{\mathbf y} = ({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W})^{-1}({\mathbf X}{\mathbf \beta} + {\mathbf W}{\mathbf X}{\mathbf \gamma}) + ({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W})^{-1}({\mathbf I} - \rho_{\mathrm{Err}} {\mathbf W})^{-1}{\mathbf \varepsilon}.
+$$
+There is interaction between the $\rho_{\mathrm{Lag}}$ and ${\mathbf \beta}$ (and ${\mathbf \gamma}$ if present) coefficients. This can be seen from the partial derivatives: $\partial y_i / \partial x_{jr} = (({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W})^{-1} ({\mathbf I} \beta_r + {\mathbf W} \gamma_r))_{ij}$. This dense matrix $S_r({\mathbf W}) = (({\mathbf I} - \rho_{\mathrm{Lag}} {\mathbf W})^{-1} ({\mathbf I} \beta_r + {\mathbf W} \gamma_r))$ expresses the direct impacts (effects) on its principal diagonal, and indirect impacts in off-diagonal elements.
+
+Current work in the **spatialreg** package is focused on refining the handling of spatially lagged covariates using a consistent `Durbin=` argument taking either a logical value or a formula giving the subset of covariates to add in spatially lagged form. There is a speculation that some covariates, for example some dummy variables, should not be added in spatially lagged form. This then extends to handling these included spatially lagged covariates appropriately in calculating impacts. This work applies to cross-sectional models fitted using MCMC or maximum likelihood, and will offer facilities to spatial panel models.
+
+It is worth mentioning the almost unexplored issues of functional form assumptions, for which flexible structures are useful, including spatial quantile regression presented in the **McSpatial** package [@mcmillen:13]. There are further issues with discrete response variables, covered by some functions in **McSpatial**, and in the **spatialprobit** and **ProbitSpatial** packages [@RJ-2013-013; @MARTINETTI201730]; the MCMC implementations of the former are based on LeSage and Pace [-@lesage+pace:09]. Finally, Wagner and Zeileis [-@wagner+zeileis:19] show how an SLM model may be used in the setting of recursive partitioning, with an implementation using `spatialreg::lagsarlm()` in the **lagsarlmtree** package.
+
+
+# Estimators
+
+The review of cross-sectional maximum likelihood and generalized method of moments (GMM) estimators in **spatialreg** and **sphet** for spatial econometrics style spatial regression models by Bivand and Piras [-@bivand+piras:15] is still largely valid. In the review, estimators in these R packages were compared with alternative implementations available in other programming languages elsewhere. The review did not cover Bayesian spatial econometrics style spatial regression. More has changed with respect to spatial panel estimators described in Millo and Piras [-@millo+piras:12], but will not be covered here.
+
+## Maximum likelihood
+
+For models with single spatial coefficients (SEM and SDEM using `errorsarlm()`, SLM and SDM using `lagsarlm()`), the methods initially described by Ord [-@ord:75] are used. The following table shows the functions that can be used to estimate the models described above using maximum likelihood.
+
+| model | model name                      | maximum likelihood estimation function |
+|-------|---------------------------------|----------------------------------------|
+| SEM   | spatial error                   | `errorsarlm(..., Durbin=FALSE, ...)`   |
+| SEM   | spatial error                   | `spautolm(..., family="SAR", ...)`     |
+| SDEM  | spatial Durbin error            | `errorsarlm(..., Durbin=TRUE, ...)`    |
+| SLM   | spatial lag                     | `lagsarlm(..., Durbin=FALSE, ...)`     |
+| SDM   | spatial Durbin                  | `lagsarlm(..., Durbin=TRUE, ...)`      |
+| SAC   | spatial autoregressive combined | `sacsarlm(..., Durbin=FALSE, ...)`     |
+| GNM   | general nested                  | `sacsarlm(..., Durbin=TRUE, ...)`      |
+
+The estimating functions `errorsarlm()` and `lagsarlm()` take similar arguments, where the first two, `formula=` and `data=` are shared by most model estimating functions. The third argument is a `listw` spatial weights object, while `na.action=` behaves as in other model estimating functions if the spatial weights can reasonably be subsetted to avoid observations with missing values. The `weights=` argument may be used to provide weights indicating the known degree of per-observation variability in the variance term - this is not available for `lagsarlm()`.
+
+```{r}
+args(errorsarlm)
+```
+```{r}
+args(lagsarlm)
+```
+The `Durbin=` argument replaces the earlier `type=` and `etype=` arguments, and if not given is taken as `FALSE`. If given, it may be `FALSE`, `TRUE` in which case all spatially lagged covariates are included, or a one-sided formula specifying which spatially lagged covariates should be included. The `method=` argument gives the method for calculating the log determinant term in the log likelihood function, and defaults to `"eigen"`, suitable for moderately sized data sets. The `interval=` argument gives the bounds of the domain for the line search using `stats::optimize()` used for finding the spatial coefficient. The `tol.solve()` argument, passed through to `base::solve()`, was needed to handle data sets with differing numerical scales among the coefficients which hindered inversion of the variance-covariance matrix; the default value in `base::solve()` used to be much larger. The `control=` argument takes a list of control values to permit more careful adjustment of the running of the estimation function. 
+
+The `spautolm()` function also fits spatial regressions with the spatial process in the residuals, and takes a possibly poorly named `family=` argument, taking the values of `"SAR"` for the simultaneous autoregressive model (like `errorsarlm()`), `"CAR"` for the conditional autoregressive model, and `"SMA"` for the spatial moving average model.
+
+```{r}
+args(spautolm)
+```
+The `sacsarlm()` function may take second spatial weights and interval arguments if the spatial weights used to model the two spatial processes in the SAC and GNM specifications differ. By default, the same spatial weights are used. By default, `stats::nlminb()` is used for numerical optimization, using a heuristic to choose starting values.
+
+```{r}
+args(sacsarlm)
+```
+Where larger data sets are used, a numerical Hessian approach is used to calculate the variance-covariance matrix of coefficients, rather than an analytical asymptotic approach. 
+
+Apart from `spautolm()` which returns an `"spautolm"` object, the model fitting functions return `"Sarlm"` objects. Standard methods for fitted models are provided, such as `summary()`:
+
+```{r}
+args(getS3method("summary", "Sarlm"))
+```
+The `Nagelkerke=` argument permits the return of a value approximately corresponding to a coefficient of determination, although the summary method anyway provides the value of `stats::AIC()` because a `stats::logLik()` method is provided for `"sarlm"` and `"spautolm"` objects. If the `"sarlm"` object is a SEM or SDEM, the Hausman test may be performed by setting `Hausman=TRUE` to see whether the regression coefficients are sufficiently like least squares coefficients, indicating absence of mis-specification from that source. As an example, we may fit SEM and SDEM to the 94 and 489 observation Boston data sets, and present the Hausman test results:
+
+```{r}
+eigs_489 <- eigenw(lw_q_489)
+SDEM_489 <- errorsarlm(form, data=boston_489, listw=lw_q_489, Durbin=TRUE, 
+                       zero.policy=TRUE, control=list(pre_eig=eigs_489))
+SEM_489 <- errorsarlm(form, data=boston_489, listw=lw_q_489, 
+                      zero.policy=TRUE, control=list(pre_eig=eigs_489))
+cbind(data.frame(model=c("SEM", "SDEM")), 
+      rbind(broom::tidy(Hausman.test(SEM_489)), 
+            broom::tidy(Hausman.test(SDEM_489))))[,1:4]
+```
+Here we are using the `control=` list argument to pass through pre-computed eigenvalues for the default `"eigen"` method. Both test results for the 489 tract data set suggest that the regression coefficients do differ, perhaps that the footprints of the spatial processes do not match. Likelihood ratio tests of the spatial models against their least squares equivalents show that spatial process(es) are present, but we find that neither SEM not SDM are adequate representations.
+
+```{r}
+cbind(data.frame(model=c("SEM", "SDEM")), 
+      rbind(broom::tidy(LR1.Sarlm(SEM_489)), 
+            broom::tidy(LR1.Sarlm(SDEM_489))))[,c(1, 4:6)]
+```
+For the 94 air pollution model output zones, the Hausman tests find little difference between coefficients, but this is related to the fact that the SEM and SDEM models add little to least squares or SLX using likelihood ratio tests.
+
+```{r}
+eigs_94 <- eigenw(lw_q_94)
+SDEM_94 <- errorsarlm(form, data=boston_94, listw=lw_q_94, Durbin=TRUE,
+                      control=list(pre_eig=eigs_94))
+SEM_94 <- errorsarlm(form, data=boston_94, listw=lw_q_94, control=list(pre_eig=eigs_94))
+cbind(data.frame(model=c("SEM", "SDEM")), 
+      rbind(broom::tidy(Hausman.test(SEM_94)), 
+            broom::tidy(Hausman.test(SDEM_94))))[, 1:4]
+```
+```{r}
+cbind(data.frame(model=c("SEM", "SDEM")), rbind(broom::tidy(LR1.Sarlm(SEM_94)), broom::tidy(LR1.Sarlm(SDEM_94))))[,c(1, 4:6)]
+```
+We can use `spatialreg::LR.sarlm()` to apply a likelihood ratio test between nested models, but here choose `lmtest::lrtest()`, which gives the same results, preferring models including spatially lagged covariates.
+
+```{r}
+broom::tidy(lmtest::lrtest(SEM_489, SDEM_489))
+```
+```{r}
+broom::tidy(lmtest::lrtest(SEM_94, SDEM_94))
+```
+The SLX model is fitted using least squares, and also returns a log likelihood value, letting us test whether we need a spatial process in the residuals. 
+
+```{r}
+args(lmSLX)
+```
+In the tract data set we obviously do:
+
+```{r}
+SLX_489 <- lmSLX(form, data=boston_489, listw=lw_q_489, zero.policy=TRUE)
+broom::tidy(lmtest::lrtest(SLX_489, SDEM_489))
+```
+but in the output zone case we do not.
+
+```{r}
+SLX_94 <- lmSLX(form, data=boston_94, listw=lw_q_94)
+broom::tidy(lmtest::lrtest(SLX_94, SDEM_94))
+```
+This outcome is sustained also when we use the counts of house units by tract and output zones as weights:
+
+```{r}
+SLX_94w <- lmSLX(form, data=boston_94, listw=lw_q_94, weights=units)
+SDEM_94w <- errorsarlm(form, data=boston_94, listw=lw_q_94, Durbin=TRUE, weights=units,
+                       control=list(pre_eig=eigs_94))
+broom::tidy(lmtest::lrtest(SLX_94w, SDEM_94w))
+```
+
+
+## Generalized method of moments
+
+The estimation methods used for fitting SLM and the spatially lagged response part of SARAR models are based on instrumental variables, using the spatially lagged covariates (usually including lags of lags too) as instruments for the spatially lagged response [@piras:10]. This, and the use of spatially lagged covariates in the moment conditions for models including a spatial process in the residuals, means that including the spatially lagged covariates in the initial model is challenging, and functions in the **sphet** package do not provide a `Durbin=` argument. This makes it harder to accommodate data with multiple spatial process footprints. However, as Kelejian and Piras show in their recent review [-@kelejian+piras:17], these approaches have other benefits, such as being able to instrument variables suspected of suffering from endogeneity or measurement error. 
+Let us first compare the ML and GMM estimates of the SEM regression coefficients for rescaled squared NOX values. We use the `sphet::spreg()` wrapper function, and fit a SEM model. Extracting the matching rows from the summary objects for these models, we can see that the values are not dissimilar, despite the difference in estimation methods.
+
+```{r}
+SEM1_94 <- sphet::spreg(form, data=boston_94, listw=lw_q_94, model="error")
+res <- rbind(summary(SEM_94)$Coef["I((NOX * 10)^2)",], 
+             summary(SEM1_94)$CoefTable["I((NOX * 10)^2)",])
+rownames(res) <- c("ML", "GMM")
+res
+```
+Using `sphet::spreg()`, we can instrument the rescaled squared NOX variable, dropping it first from the formula, next creating the rescaled squared NOX variable as a column in the `"sf"` object, extracting a matrix of coordinates from the centroids of the output zones, and creating a one-sided instrument formula from a second order polynomial in the coordinates (here improperly, as they are not projected) and mean distances to downtown and radial roads. The `endog=` argument takes a one-sided formula for the variables to be modelled in the first stage of the model. Had we re-run the original air pollution model many times under slightly varying scenarios, we could have used an ensemble of NOX loadings to yield its distribution by output zone. Because this is not possible, we assume that the measurement error can be captured by using selected instruments. Unfortunately, the NOX regression coefficient estimate from the second stage has fallen substantially in absolute size, although the sign is unchanged.
+
+```{r}
+formiv <- update(form, . ~ . - I((NOX*10)^2))
+boston_94$NOX2 <- (boston_94$NOX*10)^2
+suppressWarnings(ccoords <- st_coordinates(st_centroid(st_geometry(boston_94))))
+iform <- formula(~poly(ccoords, degree=2) + DIS + RAD)
+SEM1_94iv <- sphet::spreg(formiv, data=boston_94, listw=lw_q_94, endog = ~NOX2, 
+                   instruments=iform, model="error")
+summary(SEM1_94iv)$CoefTable["NOX2",]
+```
+Handling measurement error in this or similar ways is one of the benefits of GMM estimation methods, although here the choice of instruments was somewhat arbitrary.
+
+## Markov chain Monte Carlo 
+
+The Spatial Econometrics Library is part of the extensive Matlab code repository at https://www.spatial-econometrics.com/ and documented in LeSage and Pace [-@lesage+pace:09]. The Google Summer of Coding project in 2011 by Abhirup Mallik mentored by Virgilio Gómez-Rubio yielded translations of some of the model fitting functions for SEM, SDEM, SLM, SDM, SAC and GNM from the Matlab code. These have now been added to **spatialreg** as `spBreg_err()`, `spBreg_lag()` and `spBreg_sac()` with `Durbin=` arguments to handle the inclusion of spatially lagged covariates. As yet, heteroskedastic disturbances are not accommodated. The functions return `"mcmc"` objects as specified in the **coda** package, permitting the use of tools from **coda** for handling model output. The default burnin is 500 draws, followed by default 2000 draws returned, but these values and many others may be set through the `control=` list argument. Fitting the SDEM model for the output zones takes about an order of magnitude longer than using ML, but there is more work to do subsequently, and this difference scales more in the number of samples than covariates or observations.
+
+```{r}
+system.time(SDEM_94B <- spBreg_err(form, data=boston_94, listw=lw_q_94, Durbin=TRUE))
+```
+
+```{r}
+system.time(SDEM_489B <- spBreg_err(form, data=boston_489, listw=lw_q_489, Durbin=TRUE, zero.policy=TRUE))
+```
+Most time in the ML case using eigenvalues is taken by log determinant setup and optimization, and by dense matrix asymptotic standard errors if chosen (always chosen with default `"eigen"` log determinant method):
+
+```{r}
+t(errorsarlm(form, data=boston_94, listw=lw_q_94, Durbin=TRUE)$timings[,2])
+```
+```{r}
+t(errorsarlm(form, data=boston_489, listw=lw_q_489, Durbin=TRUE, zero.policy=TRUE)$timings[,2])
+```
+while in the MCMC case, the default use of Spatial Econometric Toolbox gridded log determinants and obviously sampling takes most time:
+
+```{r}
+t(attr(SDEM_94B, "timings")[ , 3])
+```
+
+```{r}
+t(attr(SDEM_489B, "timings")[ , 3])
+```
+However, as we will see shortly, inference from model impacts may need sampling (where the spatially lagged response is included in the model), and in the case of MCMC models, the samples have already been drawn.
+
+## Handling the log determinant term
+
+We will briefly touch on selected implementation details that applied users of spatial regression models would be wise to review. The handling of the log determinant term applies to all such users, while impacts are restricted to those employing spatial econometrics style models either including the spatially lagged response or including spatially lagged covariates.
+
+It has been known for over twenty years that the sparse matrix representation of spatial weights overcomes the difficulties of fitting models with larger numbers of observations using maximum likelihood and MCMC where the log determinant term comes into play [@pace+barry:97a; @pace+barry:97b; @pace+barry:97c; @pace+barry:97d]. During the development of these approaches in model fitting functions in **spatialreg**, use was first made of C code also used in the S-PLUS SpatialStats module [@kaluznyetal:98], then **SparseM** which used a compressed sparse row form very similar to `"nb"` and `"listw"` objects. This was followed by the use of **spam** and **Matrix** methods, both of which mainly use compressed sparse column representations. Details are provided in Bivand, Hauke and Kossowski [-@bivandetal13]. 
+
+The domain of the spatial coefficient(s) is given by the `interval=` argument to model fitting functions, and returned in the fitted object:
+
+```{r}
+SEM_94$interval
+```
+This case is trivial, because the upper bound is unity by definition, because of the use of row standardization. The interval is the inverse of the range of the eigenvalues of the weights matrix:
+
+```{r}
+1/range(eigs_94)
+```
+Finding the interval within which to search for the spatial coefficient is trivial for smaller data sets, but more complex for larger ones. It is possible to use heuristics implemented in `lextrW()` [@GRIFFITH2015119]:
+
+```{r}
+1/c(lextrW(lw_q_94))
+```
+or `RSpectra::eigs()` after coercion to a **Matrix** package compressed sparse column representation:
+
+```{r}
+W <- as(lw_q_94, "CsparseMatrix")
+1/Re(c(RSpectra::eigs(W, k=1, which="SR")$values, 
+       RSpectra::eigs(W, k=1, which="LR")$values))
+```
+Why are we extracting the real part of the values returned by `eigs()`? Since `nb_q_94` is symmetric, the row-standardized object `lw_q_94` is symmetric by similarity, a result known since Ord [-@ord:75]; consequently, we can take the real part without concern. Had the underlying neighbour relationships not been symmetric, we should be more careful.
+
+The baseline log determinant term as given by Ord [-@ord:75] for a coefficient value proposed in sampling or during numerical optimization; this extract matches the `"eigen"` method (with or without `control=list(pre_eig=...)"`):
+
+```{r}
+coef <- 0.5
+sum(log(1 - coef * eigs_94))
+```
+Using sparse matrix functions from **Matrix**, the LU decomposition can be used for asymmetric matrices; this extract matches the `"LU"` method:
+
+```{r}
+I <- Diagonal(nrow(boston_94))
+LU <- lu(I - coef * W)
+dU <- abs(diag(slot(LU, "U")))
+sum(log(dU))
+```
+and Cholesky decomposition for symmetric matrices, with `similar.listw()` used to handle asymmetric weights that are similar to symmetric. The default value od `super` allows the underlying **Matrix** code to choose between supernodal or simplicial decomposition; this extract matches the `"Matrix_J"` method:
+
+```{r}
+W <- as(similar.listw(lw_q_94), "CsparseMatrix")
+super <- as.logical(NA)
+cch <- Cholesky((I - coef * W), super=super)
+c(2 * determinant(cch, logarithm = TRUE)$modulus)
+```
+The `"Matrix"` and `"spam_update"` methods are to be preferred as they pre-compute the fill-reducing permutation of the decomposition since the weights do not change for different values of the coefficient. 
+
+Maximum likelihood model fitting functions in **spatialreg** and **splm** use `jacobianSetup()` to populate `env=` environment with intermediate objects needed to find log determinants during optimization. Passing environments to objective functions is efficient because they are passed by reference rather than value. The `con=` argument passes through the populated control list, containing default values unless the key-value pairs were given in the function call (`pre_eig=` is extracted separately). The `which=` argument is `1` by default, but will also take `2` in SAC and GNM models. **HSAR** uses `mcdet_setup()` to set up Monte Carlo approximation terms.
+
+```{r}
+args(jacobianSetup)
+```
+For each value of `coef`, the `do_ldet()` function returns the log determinant, using the values stored in environment `env=`:
+
+```{r}
+args(do_ldet)
+```
+
+As yet the Bayesian models are limited to control argument `ldet_method="SE_classic"` at present, using `"LU"` to generate a coarse grid of control argument `nrho=200L` log determinant values in the interval, spline interpolated to a finer grid of length control argument `interpn=2000L`, from which griddy Gibbs samples are drawn. It is hoped to add facilities to choose alternative methods in the future. This would offer possibilities to move beyond griddy Gibbs, but using gridded log determinant values seems reasonable at present.
+
+# Impacts
+
+Global impacts have been seen as crucial for reporting results from fitting models including the spatially lagged response (SLM, SDM, SAC. GNM) for over ten years [@lesage+pace:09]. Extension to other models including spatially lagged covariates (SLX, SDEM) has followed [@elhorst:10; @bivand:12; @halleck-vega+elhorst:15]. In order to infer from the impacts, linear combination may be used for SLX and SDEM models. For SLM, SDM, SAC and GNM models fitted with maximum likelihood or GMM, the variance-covariance matrix of the coefficients is available, and can be used to make random draws from a multivariate Normal distribution with mean set to coefficient values and variance to the estimated variance-covariance matrix. For these models fitted using Bayesian methods, draws are already available. In the SDEM case, the draws on the regression coefficients of the unlagged covariates represent direct impacts, and draws on the coefficients of the spatially lagged covariates represent indirect impacts, and their by-draw sums the total impacts.
+
+Impacts are calculated using model object class specific `impacts()` methods, here taking the method for `"sarlm"` objects as an example. In the **sphet** package, the impacts method for `"gstsls"` uses the **spatialreg** `impacts()` framework, as does the **splm** package for `"splm"` fitted model objects. `impacts()` methods require either a `tr=` - a vector of traces of the power series of the weights object typically computed with `trW()` or a `listw=` argument. If `listw=` is given, dense matrix methods are used. The `evalues=` argument is experimental, does not yet work for all model types, and takes the eigenvalues of the weights matrix. The `R=` argument gives the number of samples to be taken from the fitted model. The `Q=` permits the decomposition of impacts to components of the power series of the weights matrix [@lesage+pace:09].
+
+```{r}
+args(getS3method("impacts", "Sarlm"))
+```
+The summary method for the output of `impacts()` methods where inference from samples was requested by default uses the `summary()` method for `"mcmc"` objects defined in the **coda** package. It can instead report just matrices of standard errors, z-values and p-values by setting `zstats=` and `short=` to `TRUE`.
+
+```{r}
+args(getS3method("summary", "LagImpact"))
+```
+Since sampling is not required for inference for SLX and SDEM models, linear combination is used for models fitted using maximum likelihood; results are shown here for the air pollution variable only. The literature has not yet resolved the question of how to report model output, as each covariate is now represented by three impacts. Where spatially lagged covariates are included, two coefficients are replaced by three impacts.
+
+```{r}
+sum_imp_94_SDEM <- summary(impacts(SDEM_94))
+rbind(Impacts=sum_imp_94_SDEM$mat[5,], SE=sum_imp_94_SDEM$semat[5,])
+```
+The impacts from the same model fitted by MCMC are very similar:
+
+```{r}
+sum_imp_94_SDEM_B <- summary(impacts(SDEM_94B))
+rbind(Impacts=sum_imp_94_SDEM_B$mat[5,], SE=sum_imp_94_SDEM_B$semat[5,])
+```
+as also are those from the SLX model. In the SLX and SDEM models, the direct impacts are the consequences for the response of changes in air pollution in the same observational entity, and the indirect (local) impacts are the consequences for the response of changes in air pollution in neighbouring observational entities.
+
+```{r}
+sum_imp_94_SLX <- summary(impacts(SLX_94))
+rbind(Impacts=sum_imp_94_SLX$mat[5,], SE=sum_imp_94_SLX$semat[5,])
+```
+In contrast to local indirect impacts in SLX and SDEM models, global indirect impacts are found in models including the spatially lagged response. For purposes of exposition, let us fit an SLM:
+
+```{r}
+SLM_489 <- lagsarlm(form, data=boston_489, listw=lw_q_489, zero.policy=TRUE)
+```
+Traces of the first `m=` matrices of the power series in the spatial weights are pre-computed to speed up inference from samples from the fitted model, and from existing MCMC samples [@lesage+pace:09]. The traces can also be used in other contexts too, so their pre-computation may be worthwhile anyway. The `type=` argument is `"mult"` by default, but may also be set to `"MC"` for Monte Carlo simulation or `"moments"` using a space-saving looping algorithm.
+
+```{r}
+args(trW)
+```
+```{r}
+W <- as(lw_q_489, "CsparseMatrix")
+tr_489 <- trW(W)
+str(tr_489)
+```
+In this case, the spatial process in the response is not strong, so the global indirect impacts (here for the air pollution variable) are weak. 
+
+```{r}
+SLM_489_imp <- impacts(SLM_489, tr=tr_489, R=2000)
+SLM_489_imp_sum <- summary(SLM_489_imp, short=TRUE, zstats=TRUE)
+res <- rbind(Impacts=sapply(SLM_489_imp$res, "[", 5), SE=SLM_489_imp_sum$semat[5,])
+colnames(res) <- c("Direct", "Indirect", "Total")
+res
+```
+Of more interest is trying to reconstruct the direct and total impacts using dense matrix methods; the direct global impacts are the mean of the diagonal of the dense impacts matrix, and the total global impacts are the sum of all matrix elements divided by the number of observations. The direct impacts agree, but the total impacts differ slightly.
+
+```{r}
+coef_SLM_489 <- coef(SLM_489)
+IrW <- Diagonal(489) - coef_SLM_489[1] * W
+S_W <- solve(IrW)
+S_NOX_W <- S_W %*% (diag(489) * coef_SLM_489[7])
+c(Direct=mean(diag(S_NOX_W)), Total=sum(S_NOX_W)/489)
+```
+This bare-bones approach corresponds to using the `listw=` argument, and as expected gives the same output.
+
+```{r}
+sapply(impacts(SLM_489, listw=lw_q_489), "[", 5)
+```
+The experimental `evalues=` approach which is known to be numerically exact by definition gives the same results as the matrix power series trace approach, so the slight difference may be attributed to the consequences of inverting the spatial process matrix.
+
+```{r}
+sapply(impacts(SLM_489, evalues=eigs_489), "[", 5)
+```
+Impacts are crucial to the interpretation of Durbin models including spatially lagged covariates and models including the spatially lagged response. Tools to calculate impacts and their inferential bases are now available, and should be employed, but as yet some implementation details are under development and ways of presenting results in tabular form have not reached maturity.
+
+# Predictions
+
+We will use the `predict()` method for `"sarlm"` objects to double-check impacts, here for the pupil-teacher ratio (`PTRATIO`). The method was re-written by Martin Gubri based on Goulard, Laurent and Thomas-Agnan [-@goulardetal:17]. The `pred.type=` argument specifies the prediction strategy among those presented in the article.
+
+```{r}
+args(getS3method("predict", "sarlm"))
+```
+First we'll increment `PTRATIO` by one to show that, using least squares, the mean difference between predictions from the incremented new data and fitted values is equal to the regression coefficient.
+
+```{r}
+nd_489 <- boston_489
+nd_489$PTRATIO <- nd_489$PTRATIO + 1
+OLS_489 <- lm(form, data=boston_489)
+fitted <- predict(OLS_489)
+nd_fitted <- predict(OLS_489, newdata=nd_489)
+all.equal(unname(coef(OLS_489)[12]), mean(nd_fitted - fitted))
+```
+In models including the spatially lagged response, and when the spatial coefficient in different from zero, this is not the case in general, and is why we need `impacts()` methods. The difference here is not great, but neither is it zero, and needs to be handled.
+
+```{r}
+fitted <- predict(SLM_489)
+nd_fitted <- predict(SLM_489, newdata=nd_489, listw=lw_q_489, pred.type="TS",
+                     zero.policy=TRUE)
+all.equal(unname(coef_SLM_489[13]), mean(nd_fitted - fitted))
+```
+In the Boston tracts data set, 17 observations of median house values, the response, are censored. Using these as an example and comparing some `pred.type=` variants for the SDEM model and predicting out-of-sample, we can see that there are differences, suggesting that this is a fruitful area for study. There have been a number of alternative proposals for handling missing variables [@GOMEZRUBIO2015116; @suesse:18]. Another reason for increasing attention on prediction is that it is fundamental for machine learning approaches, in which prediction for validation and test data sets drives model specification choice. The choice of training and other data sets with dependent spatial data remains an open question, and is certainly not as simple as with independent data.
+
+Here, we'll list the predictions for the censored tract observations using three different prediction types, taking the exponent to get back to the USD median house values.
+
+```{r}
+nd <- boston_506[is.na(boston_506$median),]
+t0 <- exp(predict(SDEM_489, newdata=nd, listw=lw_q, pred.type="TS", zero.policy=TRUE))
+suppressWarnings(t1  <- exp(predict(SDEM_489, newdata=nd, listw=lw_q, pred.type="KP2",
+                                    zero.policy=TRUE)))
+suppressWarnings(t2  <- exp(predict(SDEM_489, newdata=nd, listw=lw_q, pred.type="KP5",
+                                    zero.policy=TRUE)))
+data.frame(fit_TS=t0[,1], fit_KP2=c(t1), fit_KP5=c(t2),
+           censored=boston_506$censored[as.integer(attr(t0, "region.id"))])
+```
+
+# The ACS US census tracts data set
+
+Let us read in again the ACS data set with over 70,000 observations:
+
+```{r}
+library(sf)
+df_tracts <- st_read("df_tracts.gpkg")
+set.ZeroPolicyOption(TRUE)
+spdep::set.ZeroPolicyOption(TRUE)
+nb_subset <- readRDS("nb_subset.rds")
+lw <- spdep::nb2listw(nb_subset, style="W")
+```
+In the original study, logarithms of the median income CV were thought to be driven by a slightly broader set of covariates. Here we take logs of the vacancy rate, the elderly rate, the Black and Hispanic rates, the population density, and group quarters population (institutional like prisons, non-institutional like student accommodation https://www.census.gov/newsroom/releases/archives/2010_census/cb11-tps13.html).
+
+```{r}
+tr_form <- log(med_inc_cv) ~ log1p(vacancy_rate) + log1p(old_rate) + log1p(black_rate) + log1p(hisp_rate) + log1p(group_pop) + log1p(dens)
+```
+
+The available covariates are not the same as in the original article, but our focus here is to show that larger data sets can be used in analysis:
+
+```{r}
+lm_mod <- lm(tr_form, data=df_tracts)
+summary(lm_mod)
+```
+The least squares residuals show strong positive spatial autocorrelation:
+
+```{r}
+spdep::lm.morantest(lm_mod, lw)
+```
+
+Adding the spatially lagged covariates in SLX model form might make sense:
+
+```{r}
+SLX <- lmSLX(tr_form, data=df_tracts, listw=lw, zero.policy=TRUE)
+summary(SLX)
+```
+
+The level of residual spatial autocorrelation is effectively unchanged, perhaps suggesting that the spatial footprint of the autocorrelation process(es) may not be well-represented by the chosen definition of tract neighbours:
+
+```{r}
+spdep::lm.morantest(SLX, lw)
+```
+The linear combinations of unlagged and lagged covariates give these impacts, many pulling the same way:
+
+```{r}
+summary(spatialreg::impacts(SLX))
+```
+
+```{r}
+summary(df_tracts$tot_pop)
+```
+
+```{r}
+quantile(df_tracts$group_pop, seq(0, 1, 0.1))
+```
+
+```{r}
+plot(df_tracts$group_pop, df_tracts$group_pop/df_tracts$tot_pop)
+```
+
+
+```{r}
+plot(df_tracts$tot_pop, df_tracts$group_pop/df_tracts$tot_pop)
+```
+
+Weighted least squares use the range of the weights to assign tracts with larger populations less residual variance, but here the group quarters populations play in too:
+
+```{r}
+lm_modw <- lm(tr_form, data=df_tracts, weights=tot_pop)
+summary(lm_modw)
+```
+
+
+```{r}
+spdep::lm.morantest(lm_modw, lw)
+```
+We can  try the same with other models, such as SLX, but again with little change:
+
+```{r}
+SLXw <- lmSLX(tr_form, weights=tot_pop, data=df_tracts, listw=lw, zero.policy=TRUE)
+summary(SLXw)
+```
+
+
+```{r}
+spdep::lm.morantest(SLXw, lw)
+```
+
+
+```{r}
+summary(spatialreg::impacts(SLXw))
+```
+
+
+With a larger number of observations, using eigenvalues to calculate the Jacobian is not possible, so we use a pre-computed Cholesky decomposition:
+
+```{r}
+SEM <- spatialreg::errorsarlm(tr_form, data=df_tracts, listw=lw, method="Matrix", zero.policy=TRUE)
+apply(SEM$timings, 2, sum)
+```
+
+
+```{r}
+summary(SEM, Hausman=TRUE, Nagelkerke=TRUE)
+```
+
+We can also use single-chain MCMC with default 2500 draws, of which 500 are treated as burn-in and discarded; much of the time is spent on pre-computing a coarse grid of LU-decomposition Jacobian terms:
+
+```{r, cache=TRUE}
+set.seed(1)
+BSEM <- spatialreg::spBreg_err(tr_form, data=df_tracts, listw=lw, zero.policy=TRUE)
+apply(attr(BSEM, "timings")[,c(1,3)], 2, sum)
+```
+As we know, the model MCMC output is held in an `"mcmc"` object defined in **coda**:
+
+```{r}
+library(coda)
+summary(BSEM)
+```
+
+Diagnostic tests from **coda** can also be used:
+
+```{r}
+raftery.diag(BSEM, r=0.01)
+```
+
+
+```{r}
+plot(BSEM, trace=FALSE)
+```
+
+We can also use weights with SEM and conditioned SEM models:
+
+```{r}
+SEMw <- spatialreg::errorsarlm(tr_form, weights=tot_pop, data=df_tracts, listw=lw, method="Matrix", zero.policy=TRUE)
+apply(SEMw$timings, 2, sum)
+```
+
+
+```{r}
+summary(SEMw, Hausman=TRUE, Nagelkerke=TRUE)
+```
+
+and its Durbin variant:
+
+```{r}
+SDEM <- spatialreg::errorsarlm(tr_form, data=df_tracts, listw=lw, method="Matrix", Durbin=TRUE, zero.policy=TRUE)
+apply(SDEM$timings, 2, sum)
+```
+
+
+```{r}
+summary(SDEM, Nagelkerke=TRUE)
+```
+
+
+```{r}
+summary(spatialreg::impacts(SDEM))
+```
+
+and weighted:
+
+```{r}
+SDEMw <- spatialreg::errorsarlm(tr_form, weights=tot_pop, data=df_tracts, listw=lw, method="Matrix", Durbin=TRUE, zero.policy=TRUE)
+apply(SDEMw$timings, 2, sum)
+```
+
+
+```{r}
+summary(SDEMw, Hausman=TRUE, Nagelkerke=TRUE)
+```
+
+
+```{r}
+summary(spatialreg::impacts(SDEMw))
+```
+
+Finally, using the development version of **sphet**:
+
+```{r}
+library(sphet)
+system.time(SEM_GMM <- spreg(tr_form, data=df_tracts, listw=as(lw, "CsparseMatrix"), model="error", het=FALSE))
+```
+
+
+```{r} 
+summary(SEM_GMM)
+```
+
+with its Durbin variant:
+
+```{r}
+system.time(SDEM_GMM <- spreg(tr_form, data=df_tracts, listw=as(lw, "CsparseMatrix"), model="error", het=FALSE, Durbin=TRUE))
+```
+
+
+```{r} 
+summary(SDEM_GMM)
+```
+
+This also lets us adjust the coefficient standard errors for heterskedasticity:
+
+```{r}
+system.time(SEM_GMMh <- spreg(tr_form, data=df_tracts, listw=as(lw, "CsparseMatrix"), model="error", het=TRUE))
+```
+
+
+```{r} 
+summary(SEM_GMMh)
+```
+
+
+```{r}
+system.time(SDEM_GMMh <- spreg(tr_form, data=df_tracts, listw=as(lw, "CsparseMatrix"), model="error", het=TRUE, Durbin=TRUE))
+```
+
+
+```{r} 
+summary(SDEM_GMMh)
+```
+
+### R's `sessionInfo()`
+
+```{r sI, echo = TRUE}
+sessionInfo()
+```

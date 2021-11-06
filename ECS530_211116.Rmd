@@ -1,0 +1,815 @@
+---
+title: "Spatial data analysis II"
+author: "Roger Bivand"
+date: "Tuesday 16 November 2021"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    toc_depth: 2
+theme: united
+bibliography: ecs530_21.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, paged.print=FALSE)
+```
+
+```{r set-options-cdn, echo=TRUE, results='hide'}
+td <- tempfile()
+dir.create(td)
+Sys.setenv("PROJ_USER_WRITABLE_DIRECTORY"=td)
+#Sys.setenv("PROJ_NETWORK"="ON")
+options("rgdal_show_exportToProj4_warnings"="none")
+```
+
+### Copyright
+
+All the material presented here, to the extent it is original, is available under [CC-BY-SA](https://creativecommons.org/licenses/by-sa/4.0/). 
+
+### Required current contributed CRAN packages:
+
+I am running R 4.1.2, with recent `update.packages()`.
+
+```{r, echo=TRUE}
+needed <- c("ggplot2", "mapsf", "colorspace", "RColorBrewer", "classInt", 
+ "tmap", "rgdal", "mapview", "sp", "RSQLite", "sf")
+```
+
+### Script
+
+Script and data at https://github.com/rsbivand/ECS530_21/raw/main/ECS530_21_II.zip. Download to suitable location, unzip and use as basis.
+
+
+
+# Coordinate reference systems: background
+
+The usefulness of spatial data is linked to knowing its coordinate reference system. The coordinate reference system may be geographic, usually measured in decimal degrees, or projected, layered on a known geographic CRS, usually measured in metres (planar). The underlying geographical CRS must specify an ellipsoid, with associated major and minor axis lengths:
+
+```{r}
+library(sf)
+#library(rgdal)
+sf_extSoftVersion()
+head(sf_proj_info("ellps"))
+```
+
+Other parameters should be specified, such as the prime meridian, often taken as Greenwich. Before PROJ version 6, legacy PROJ (and GDAL) used a `+datum=` tag introduced after the library migrated beyond USGS (around version 4.4). The underlying problem was not that projection and inverse projection could not be carried out between projected CRS and geograpghical CRS, but that national mapping agencies defined often many datums, keying the specification of a geographical CRS to a national or regional datum. Some of these, especially for North America, were supported, but support for others was patchy. The `+datum=` tag supported a partly informal listing of values, themselves linked to three or seven coefficient datum transformation sets, used through the `+towgs84=` tag. Coefficient lookup through the `+datum=` tag, or direct specification of coefficients through the `+towgs84=` tag became a convenient way to handle datum transformation in addition to projection and inverse projection.
+
+The default "hub" for transformation was to go through the then newly achieved WGS84 datum. Spatial data files often encoded the geographic and projected CRS with reference to these values, in some cases using PROJ 4 strings. These used a pseudo projection `+proj=longlat` to indicate a geographical CRS, and many other possible values of `+proj=` for projected CRS.
+
+The [Grids & Datums column](https://www.asprs.org/asprs-publications/grids-and-datums) in *Photogrammetric Engineering & Remote Sensing* gives insight into some of the peculiarities of national mapping agencies - authority is typically national but may be subnational:
+
+```{r}
+data("GridsDatums", package="rgdal")
+GridsDatums[grep("Norway", GridsDatums$country),]
+```
+
+```{r echo=FALSE}
+knitr::include_graphics('NGO.png')
+```
+
+
+Beyond this, the database successively developed by the European Petroleum Survey Group was copied to local CSV files for PROJ and GDAL, providing lookup by code number. From PROJ 6, GDAL no longer uses these CSV files. PROJ continues to use the European Petroleum Survey Group (EPSG) database, supplemented from other sources, the local copy PROJ uses is now an SQLite database, with a large number of tables:
+
+
+```{r, echo = TRUE} 
+library(RSQLite)
+(DB0 <- sf_proj_search_paths())
+DB <- file.path(DB0[length(DB0)], "proj.db")
+db <- dbConnect(SQLite(), dbname=DB)
+cat(strwrap(paste(dbListTables(db), collapse=", ")), sep="\n")
+```
+
+
+```{r}
+PROJ.DB <- dbReadTable(db, "crs_view")
+dbDisconnect(db)
+PROJ.DB[grep("Norway", PROJ.DB$name), 2:5]
+```
+
+```{r}
+PROJ.DB[grep("Oslo", PROJ.DB$name), 2:5]
+```
+
+[CRS-explorer](https://jjimenezshaw.github.io/crs-explorer/)
+
+[Goodbye PROJ.4! How to specify a coordinate reference system in R?](https://inbo.github.io/tutorials/tutorials/spatial_crs_coding/)
+
+```{r}
+st_crs("EPSG:25831")
+```
+
+Up to and including PROJ 5, downstream software, like **sf** and **rgdal**, have been able to rely on the provision of *ad-hoc* transformation capabilities, with apparently predictable consequences. Everybody knew (or should have known) that each new release of the PROJ and GDAL CSV metadata files could update transformation coefficients enough to shift outcomes a little. Everyone further chose to ignore the timestamping of coordinates, or at least of datasets; we could guess (as above) that US Census tract boundaries for 1980 must use the NAD27 datum framework - suprisingly many used NAD83 anyway (both for Boston and the North Carolina SIDS data set).
+
+Use of KML files to provide zoom and pan for these boundaries, and now **leaflet** and **mapview** exposes approximations mercilessly. Use of coefficients of transformation of an unknown degree of approximation, and authority "googled it" was reaching its limits, or likely had exceeded them.
+
+**sp** classes used a PROJ string to define the CRS (in an S4 `"CRS"` object):
+
+```{r}
+getClassDef("CRS", package="sp")
+```
+
+**sf** used an S3 `"crs"` object with an integer EPSG code and a PROJ string; if instantiated from the EPSG code, both were provided. In current **sf**, the `"crs"` object has user input and wkt components, and methods to access the PROJ string and the EPSG code for backward compatibility, and from PROJ 8 and EPSG 10 we get datum ensembles:
+
+```{r}
+st_crs(4326)
+```
+
+# Modernising PROJ and issues
+
+
+### PROJ
+
+Because so much open source (and other) software uses the PROJ library and framework, many are affected when PROJ upgrades. Until very recently, PROJ has been seen as very reliable, and the changes taking place now are intended to confirm and reinforce this reliability. Before PROJ 5 (PROJ 6 was released in 2019, PROJ 7 was released in March 2020), the `+datum=` tag was used, perhaps with `+towgs84=` with three or seven coefficients, and possibly `+nadgrids=` where datum transformation grids were available. However, transformations from one projection to another first inversed to longitude-latitude in WGS84, then projected on to the target projection.
+
+
+> Fast-forward 35 years and PROJ.4 is everywhere: It provides coordinate handling for almost every geospatial program, open or closed source. Today, we see a drastical  increase  in  the  need  for  high  accuracy  GNSS  coordinate  handling, especially in the agricultural and construction engineering sectors. This need for geodetic-accuracy transformations  is  not  satisfied  by "classic  PROJ.4". But with  the  ubiquity  of  PROJ.4,  we  can provide these transformations "everywhere", just by implementing them as part of PROJ.4 [@evers+knudsen17].
+
+
+### Escaping the WGS84 hub/pivot: PROJ and OGC WKT2
+
+
+Following the introduction of geodetic modules and pipelines in PROJ 5 [@knudsen+evers17; @evers+knudsen17], PROJ 6 moves further. Changes in the legacy PROJ representation and WGS84 transformation hub have been coordinated through the [GDAL barn raising](https://gdalbarn.com/) initiative. Crucially WGS84 often ceases to be the pivot for moving between datums. SRS will begin to support 3D by default, adding time too as SRS change. See also [PROJ migration notes](https://proj.org/development/migration.html).
+
+There are very useful postings on the PROJ mailing list from Martin Desruisseaux, first [proposing clarifications](https://lists.osgeo.org/pipermail/proj/2019-July/008748.html) and a [follow-up](https://lists.osgeo.org/pipermail/proj/2019-August/008750.html) including a summary:
+
+> * "Early binding" ≈ hub transformation technique.
+
+> * "Late binding" ≈ hub transformation technique NOT used, replaced by
+a more complex technique consisting in searching parameters in the
+EPSG database after the transformation context (source, target,
+epoch, area of interest) is known.
+
+> * The problem of hub transformation technique is independent of WGS84.
+It is caused by the fact that transformations to/from the hub are
+approximate. Any other hub we could invent in replacement of WGS84
+will have the same problem, unless we can invent a hub for which
+transformations are exact (I think that if such hub existed, we
+would have already heard about it).
+
+> The solution proposed by ISO 19111 (in my understanding) is:
+
+> * Forget about hub (WGS84 or other), unless the simplicity of
+early-binding is considered more important than accuracy.
+
+> * Associating a CRS to a coordinate set (geometry or raster) is no
+longer sufficient. A {CRS, epoch} tuple must be associated. ISO
+19111 calls this tuple "Coordinate metadata". From a programmatic
+API point of view, this means that getCoordinateReferenceSystem()
+method in Geometry objects (for instance) needs to be replaced by a
+getCoordinateMetadata() method.
+
+This [page](http://www.sirgas.org/en/sirgas-con-network/velocity-model/) gives a picture of why the changes in PROJ matter - the arrows are in cm per year displacement:
+
+
+```{r echo=FALSE}
+knitr::include_graphics('VEMOS_sum.png')
+```
+
+To handle this level of detail, PROJ 7 introduces an on-demand content delivery network under user control as an alternative to dowloading many possibly unnecessary time-specific vertical and horizontal transformation grids. PROJ 8 will introduce datum ensembles, particularly for commonly used datums such as EPSG:4326, which have had (especially in Noth America) multiple, differing, instantiations as time has progressed; for now we do not know what the consequences of this will be - it is already in the EPSG database.
+
+### Upstream software dependencies of the R-spatial ecosystem
+
+When changes occur in upstream external software, R packages using these libraries often need to adapt, but package maintainers try very hard to shield users from any consequences, so that legacy workflows continue to provide the same or at least similar results from the same data. 
+
+The code shown in [@asdar1; @asdar2] is almost all run nightly on a platform with updated R packages and external software. 
+
+This does not necessarily trap all differences (figures are not compared), but is helpful in detecting impacts of changes in packages or external software. 
+
+It is also very helpful that CRAN servers using the released and development versions of R, and with different levels of external software also run nightly checks. 
+
+Again, sometimes changes are only noticed by users, but quite often checks run by maintainers and by CRAN alert us to impending challenges. 
+
+Tracking the development mailing lists of the external software communities, all open source, can also show how thinking is evolving, although sometimes code tidying in external software can have unexpected consequences, breaking not **sf** or **sp** with **rgdal** or **rgeos**, but a package further downstream. 
+
+
+```{r echo=FALSE}
+knitr::include_graphics('sf_deps.png')
+```
+
+
+[@bivand14] discusses open source geospatial software stacks more generally, but here we will consider ongoing changes in PROJ, see also [@bivand:20].
+
+[@knudsen+evers17; @evers+knudsen17] not only point out how the world has changed since a World Geodetic System of 1984 (WGS84) was adopted as a hub for coordinate transformation in PROJ, but also introduced transformation pipelines. 
+
+In using a transformation hub, PROJ had worked adequately when the errors introduced by transforming first to WGS84 and then from WGS84 to the target coordinate reference system, but with years passing from 1984, the world has undergone sufficient tectonic shifts for errors to increase. 
+
+In addition, the need for precision has risen in agriculture and engineering. 
+So PROJ, as it was, risked ceasing to be fit for purpose as a fundamental component of the geospatial open source software stack.
+
+Following major changes in successive iterations of the international standards for coordinate reference systems [@iso19111], PROJ is changing from preferring "late-binding" transformations, pivoting through a known transformation hub in going from input to target coordinate reference systems, to "early-binding" transformations. 
+
+This means that the user may be offered alternative paths from input to target coordinate reference systems, some of which may go directly, and more will use higher precision transformation grids, enlarging the existing practice of using North American Datum (NAD) grids. 
+
+In other cases, three or seven coefficient transformations may be offered, but the default fallback, where little is known about the input or target specification, may be less satisfactory than PROJ has previously offered.
+
+
+### Grid CDN mechanism
+
+The grid CDN is available at https://cdn.proj.org, and can be turned on for use in **sf**, where setting an environment variable also seems necessary: `Sys.setenv("PROJ_NETWORK"="ON")`. Files are now stored in a single GTiff format (I think cloud-optimised).
+
+### Transformation pipelines
+
+In addition, the current iteration of the standard makes it more important to declare the epoch of interest of coordinates (when the position was recorded and how) and the region of interest. 
+
+A transformation pathway may have an undefined epoch and a global span, but cannot achieve optimal precision everywhere. 
+
+By bounding the region of interest say within a tectonic plate, and the epoch to a given five-year period, very high precision transformations may be possible. 
+
+These choices have not so far been required explicitly, but for example matching against the `"area"` table in the database may reduce the number of transformation pathways offered dramatically.
+
+### CRS in R before PROJ 
+
+
+The **mapproj** package provided coordinate reference system and projection support for the **maps** package. From `mapproj/src/map.h`, line 20, we can see that the eccentricity of the Earth is defined as `0.08227185422`, corrresponding to the Clark 1866 ellipsoid [@iliffe]:
+
+
+```{r, echo = TRUE}
+ellps <- sf_proj_info("ellps")
+(clrk66 <- unlist(ellps[ellps$name=="clrk66",]))
+```
+
+With a very few exceptions, projections included in `mapproj::mapproject()` use the Clarke 1866 ellipsoid, with the remainder using a sphere with the Clarke 1866 major axis radius. The function returns coordinates for visualization in an unknown metric; no inverse projections are available.
+
+```{r, echo = TRUE}
+eval(parse(text=clrk66["major"]))
+eval(parse(text=clrk66["ell"]))
+print(sqrt((a^2-b^2)/a^2), digits=10)
+```
+
+### Approaching and implemented changes in PROJ
+
+- PROJ developers not only point out how the world has changed since a World Geodetic System of 1984 (WGS84) was adopted as a hub for coordinate transformation in PROJ, but also introduced transformation pipelines [@knudsen+evers17; @evers+knudsen17]. 
+
+- In using a transformation hub, PROJ had worked adequately when the errors introduced by transforming first to WGS84 and then from WGS84 to the target coordinate reference system were acceptable, but with years passing from 1984, the world has undergone sufficient tectonic shifts for errors to increase, just as needs for accuracy sharpen. 
+
+- In addition, the need for accuracy has risen in agriculture and engineering. 
+
+- So PROJ, as it was, risked ceasing to be fit for purpose as a fundamental component of the geospatial open source software stack.
+
+
+PROJ will also become more tightly linked to authorities responsible for the specification components. While the original well-known text (WKT1) descriptions also contained authorities, WKT2 (2019) is substantially more stringent. 
+
+The initial use of coordinate reference systems for objects defined in **sp** was based on the PROJ string representation, which built on a simplified key=value form. 
+
+Keys began with plus (`+`), and the value format depended on the key. 
+
+If essential keys were missing, some might be added by default from a file that has now been eliminated as misleading; if `+ellps=` was missing and not added internally from other keys, `+ellps=WGS84` would be added silently to refer to the World Geodetic System 1984 ellipsoid definition.
+
+Accurate coordinate transformation has always been needed for the integration of data from different sources, but has become much more pressing as web mapping has become available in R, through the **leaflet** package [@leaflet-package], on which **mapview** and the `"view"` mode of **tmap** build. 
+
+As web mapping provides zooming and panning, possible infelicities that were too small to detect as mismatches in transformation jump into prominence. 
+
+The web mapping workflow transforms input objects to `OGC:CRS84` (geographical CRS WGS 84, World area of relevance, WGS84 datum, visualization order) as expected by **leaflet**, then on to `EPSG:3857` (WGS 84 / Pseudo-Mercator) for display on web map backgrounds (this is carried out internally in **leaflet**). 
+
+Objects shown in **mapview** and **tmap** are now coerced to **sf** classes, then `st_transform()` transforms to `OGC:CRS84` if necessary (or until we are sure `EPSG:4326` never swaps axes).
+
+### Broad Street Cholera Data
+
+
+
+John Snow did not use maps to *find* the Broad Street pump, the polluted water source behind the 1854 cholera epidemic in Soho in central London, because he associated cholera with water contaminated with sewage, based on earlier experience [@brodyetal:00]. The basic data to be used here were made available by Jim Detwiler, who had collated them for David O'Sullivan for use on the cover of O'Sullivan and Unwin [-@osullivan+unwin:03], based on earlier work by Waldo Tobler and others.
+
+
+### Where is the Broad Street pump?
+
+We'll use the example of the location of the Broad Street pump in Soho, London, to be distributed with **sf**; the object has planar coordinates in the OSGB British National Grid projected CRS with the OSGB datum:
+
+```{r, echo = TRUE, eval=TRUE} 
+bp_file <- system.file("gpkg/b_pump.gpkg", package="sf")
+b_pump_sf <- st_read(bp_file)
+```
+
+### Proj4 string degradation
+
+Before R packages upgraded the way coordinate reference systems were represented in early 2020, our Proj4 string representation suffered degradation. Taking the Proj4 string defined in PROJ 5 for the British National Grid, there is a `+datum=OSGB36` key-value pair. But when processing this input with PROJ 6 and GDAL 3, this key is removed. Checking, we can see that reading the input string appears to work, but the output for the Proj4 string drops the `+datum=OSGB36` key-value pair, introducing instead the ellipse implied by that datum:
+
+```{r, echo = TRUE, eval=TRUE} 
+proj5 <- paste0("+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717",
+ " +x_0=400000 +y_0=-100000 +datum=OSGB36 +units=m +no_defs")
+legacy <- st_crs(proj5)
+proj6 <- legacy$proj4string
+proj5_parts <- unlist(strsplit(proj5, " "))
+proj6_parts <- unlist(strsplit(proj6, " "))
+proj5_parts[!is.element(proj5_parts, proj6_parts)]
+proj6_parts[!is.element(proj6_parts, proj5_parts)]
+```
+
+We can emulate the problem seen following the release in May 2019 of GDAL 3.0.0 using PROJ 6, by inserting the degraded Proj4 string into the Broad Street pump object. The coordinate reference system representation is now ignorant of the proper datum specification. The apparent `"proj4string"` component of the **sf** `"crs"` is used to permit packages to adapt, even though its contents are degraded.
+
+```{r, echo = TRUE, eval=TRUE} 
+b_pump_sf1 <- b_pump_sf
+st_crs(b_pump_sf1) <- st_crs(st_crs(b_pump_sf1)$proj4string)
+```
+
+Why does this matter? For visualization on a web map, for example using the **mapview** package, the projected geometries are transformed to the same WGS84 ellipse and datum (`OGC:CRS84`) that were used in PROJ 4 as a transformation hub. `OGC:CRS84` is the visualization axis order equivalent of `EPSG:4326`. In **leaflet**, these are projected to Web Mercator (`EPSG:3856`). Inside `mapview()`, the `sf::st_transform()` function is used, so we will emulate this coordinate operation before handing on the geometries for display. 
+
+However, because the one of the objects now has a degraded Proj4 string representation of its coordinate reference system, the output points, apparently transformed identically to WGS84, are now some distance apart:
+
+
+```{r, echo = TRUE, eval=TRUE} 
+Sys.setenv("PROJ_NETWORK"="OFF")
+sf_proj_network(FALSE)
+list.files(sf_proj_search_paths()[1])
+b_pump_sf_ll <- st_transform(b_pump_sf, "OGC:CRS84")
+list.files(sf_proj_search_paths()[1])
+b_pump_sf1_ll <- st_transform(b_pump_sf1, "OGC:CRS84")
+list.files(sf_proj_search_paths()[1])
+sf_use_s2(FALSE)
+st_distance(b_pump_sf_ll, b_pump_sf1_ll)
+```
+
+
+The Broad Street pump is within 1m or 2m of the green point (relative accuracy preserved) but the red point is now in Ingestre Place, because of the loss of the datum specification.
+
+```{r, echo = TRUE, eval=TRUE} 
+library(mapview)
+if (sf:::CPL_gdal_version() >= "3.1.0") mapviewOptions(fgb = FALSE)
+pts <- rbind(b_pump_sf_ll, b_pump_sf1_ll)
+pts$CRS <- c("original", "degraded")
+mapview(pts, zcol="CRS", map.type="OpenStreetMap", col.regions=c("green", "red"), cex=18)
+```
+
+### Implemented resolutions: WKT2 2019
+
+- Once PROJ 6 and GDAL 3 had stabilized in the summer of 2019, we identified the underlying threat as lying in the advertised degradation of GDAL's `exportToProj4()` function. 
+
+- When reading raster and vector files, the coordinate reference system representation using Proj4 strings would often be degraded, so that further transformation within R (also using GDAL/PROJ functionality) would be at risk of much greater inaccuracy than before. 
+
+- Since then, **sf**, **sp** with **rgdal** and **raster** have adopted the 2019 version of the "Well-Known Text" coordinate reference system representation WKT2-2019 [@iso19111] instead of Proj4 strings to contain coordinate reference system definitions. 
+
+- Accommodations have also been provided so that the S3 class `"crs"` objects used in objects defined in **sf**, and the formal S4 class `"CRS"` objects used objects defined in **sp** and **raster**, can continue to attempt to support Proj4 strings in addition, while other package maintainers and workflow users catch up.
+
+- Following an extended campaign of repeated checking about 900 reverse dependencies (packages depending on **sp**, **rgdal** and others) and dozens of github issues, most of the consequences of the switch to WKT2 among packages have now been addressed. 
+
+- More recently (late August 2020), 115 packages are being offered rebuilt stored objects that had included `"CRS"` objects without WKT2 definitions.
+
+- This approach has ensured that spatial objects, whether created within R, read in from external data sources, or read as stored objects, all have WKT2 string representations of their coordinate reference systems, and for backward compatibility can represent these in addition as Proj4 strings. 
+
+- Operations on objects should carry forward the new representations, which should also be written out to external data formats correctly. 
+
+### Specified axis order
+
+There is a minor divergence between **sf** and **sp** (and thus **rgdal**): in **sf**, the axis order of the CRS is preserved as instantiated, but objects do not have their axes swapped to accord with authorities unless `sf::st_axis_order()` is set `TRUE´. This can appear odd, because although the representation records a northings-eastings axis order, data are treated as eastings-northings in plotting, variogram construction and so on:
+
+```{r, echo = TRUE, eval=TRUE} 
+st_crs("EPSG:4326")
+```
+
+In **sp**/**rgdal**, attempts are made to ensure that axis order is in the form termed GIS, traditional, or visualization, that is always eastings-northings. From very recent **rgdal** commits (from rev. 1060), PROJ rather than GDAL is used for instantiating CRS:
+
+```{r, echo = TRUE, eval=TRUE} 
+library(sp)
+cat(wkt(CRS("EPSG:4326")), "\n")
+```
+
+The probability of confusion increases when coercing from **sf** to **sp** and vice-versa, with the representations most often remaining unchanged.
+
+
+```{r, echo = TRUE, eval=TRUE} 
+sf_from_sp <- st_crs(CRS("EPSG:4326"))
+o <- strsplit(sf_from_sp$wkt, "\n")[[1]]
+cat(paste(o[grep("CS|AXIS|ORDER", o)], collapse="\n"))
+```
+
+Both of these coercions are using the same underlying PROJ and GDAL versions, and the same PROJ metadata. Work on this question has not yet stabilized; we perhaps prefer all data to be GIS-order, but to be able to read/write from and to authority order. 
+
+```{r, echo = TRUE, eval=TRUE} 
+sp_from_sf <- as(st_crs("EPSG:4326"), "CRS")
+o <- strsplit(wkt(sp_from_sf), "\n")[[1]]
+cat(paste(o[grep("CS|AXIS|ORDER", o)], collapse="\n"))
+```
+
+Current thinking is to avoid the `EPSG:4326` axis order issue by recommending use of `OGC:CRS84`, which is the representation used in GeoJSON, and also known as `urn:ogc:def:crs:OGC::CRS84`. This specification is always eastings-northings:
+
+```{r, echo = TRUE, eval=TRUE} 
+cat(st_crs("OGC:CRS:84")$wkt, "\n")
+```
+
+```{r, echo = TRUE, eval=TRUE} 
+cat(wkt(CRS("OGC:CRS84")), "\n")
+```
+
+### Coordinate operations
+
+Transformation in **sf** uses code in GDAL, which in turn uses functions in PROJ; in **sp**/**rgdal**, PROJ is used directly for transformation. In order to demonstrate more of what is happening, `sf_proj_pipelines()` has been added to **sf**:
+
+
+```{r, echo = TRUE, eval=TRUE}
+(o <- sf_proj_pipelines(st_crs(b_pump_sf), "OGC:CRS84"))
+```
+
+```{r}
+as.data.frame(o)[,c(5,8)]
+```
+
+
+### Areas of interest
+
+In **sf**, areas-of-interest need to be given by the users. The provision of areas-of-interest is intended to reduce the number of candidate coordinate operations found by PROJ.
+
+```{r, echo = TRUE, eval=TRUE} 
+aoi0 <- sf_project(st_crs(b_pump_sf), "OGC:CRS84", matrix(unclass(st_bbox(b_pump_sf)), 2, 2, byrow=TRUE))
+aoi <- c(t(aoi0 + c(-0.1, +0.1)))
+(o_aoi <- sf_proj_pipelines(st_crs(b_pump_sf), "OGC:CRS84", AOI=aoi))
+```
+
+
+```{r}
+as.data.frame(o_aoi)[,c(5,8)]
+```
+
+
+`sf::sf_proj_pipelines()` accesses the PROJ metadata database to search through candidate coordinate operations, ranking them by accuracy, returning a data frame of operations. When an area-of-interest is provided, candidates not intersecting it are dropped. Coordinate operations that cannot be instantiated because of missing grids are also listed. Here without an area-of-interest: `r formatC(nrow(o), format="d")` candidate operations are found when the WKT string contains datum information. Of these, `r formatC(sum(o[["instantiable"]]), format="d")` may be instantiated, with `r formatC(sum(o[["grid_count"]]), format="d")` needing a grid. `r formatC((nrow(o) - nrow(o_aoi)), format="d")` operations cease to be candidates if we use an area-of-interest.
+
+### Coordinate operations
+
+In **sp**/**rgdal**, the coordinate operation last used is returned, and can be retrieved using `rgdal::get_last_coordOp()`; coordinate operations are represented as pipelines [@knudsen+evers17; @evers+knudsen17], introduced in PROJ 5 and using the PROJ key-value pair notation:
+
+```{r, echo = TRUE, eval=TRUE} 
+(helm <- as.data.frame(o_aoi)[o_aoi$accuracy==2, "definition"])
+b_pump_sf_ll <- st_transform(b_pump_sf, "OGC:CRS84", pipe=helm, aoi=aoi)
+```
+
+Here we can see that an inverse projection from the specified Transverse Mercator projection is made to geographical coordinates, followed by a seven-parameter Helmert transformation to WGS84 ellipsoid and datum. The parameters are contained in the best instantiable coordinate operation retrieved from the PROJ database. The `+push +v_3` and `+pop +v_3` operations are used when only horizontal components are needed in the Helmert transformation.
+
+```{r}
+(o_aoi1 <- sf_proj_pipelines(st_crs(b_pump_sf1), "OGC:CRS84", AOI=aoi))
+```
+
+```{r, echo = TRUE, eval=TRUE} 
+b_pump_sf1_ll <- st_transform(b_pump_sf1, "OGC:CRS84")
+st_distance(b_pump_sf_ll, b_pump_sf1_ll)
+```
+
+Going on to the case of the degraded representation, only `r formatC(nrow(o_aoi1), format="d")` operation is found, with only ballpark accuracy. With our emulation of the dropping of `+datum=` support in GDAL's `exportToProj4()`, we see that the coordinate operation pipeline only contains the inverse projection step, accounting for the observed shift of the Broad Street pump to Ingestre Place.
+
+### Using the content download network to access grids
+
+Finally, **sp**/**rgdal** may use the provision of on-demand downloading of transformation grids to provide more accuracy (CDN, from PROJ 7, https://cdn.proj.org ). Before finding and choosing to use a coordinate operation using an on-demand downloaded grid, the designated directory is empty:
+
+
+```{r, echo = TRUE, eval=TRUE} 
+sf_proj_network()
+```
+
+```{r, echo = TRUE, eval=TRUE} 
+Sys.setenv("PROJ_NETWORK"="ON")
+sf_proj_network(TRUE)
+```
+
+Using the CDN, all the candidate operations are instantiable, and the pipeline now shows a horizontal grid transformation rather than a Helmert transformation.
+
+
+
+
+```{r, echo = TRUE, eval=TRUE} 
+(og <- sf_proj_pipelines(st_crs(b_pump_sf), "OGC:CRS84", AOI=aoi))
+```
+
+```{r, echo = TRUE, eval=TRUE} 
+list.files(sf_proj_search_paths()[1])
+b_pump_sf_llgd <- st_transform(b_pump_sf, "OGC:CRS84")
+list.files(sf_proj_search_paths()[1])
+```
+
+```{r}
+library(rgdal)
+is_proj_CDN_enabled()
+b_pump_sp_llgd <- spTransform(as(b_pump_sf, "Spatial"), "OGC:CRS84")
+list.files(sf_proj_search_paths()[1])
+DB <- file.path(DB0[1], "cache.db")
+db <- dbConnect(SQLite(), dbname=DB)
+cat(strwrap(paste(dbListTables(db), collapse=", ")), sep="\n")
+dbReadTable(db, "chunks")
+dbDisconnect(db)
+b_pump_sf_llgdsp <- st_as_sf(b_pump_sp_llgd)
+```
+
+
+
+Now the downloaded grid is cached in the database in the designated CDN directory, and may be used for other transformations using the same operation.
+
+
+```{r, echo = TRUE, eval=TRUE} 
+Sys.setenv("PROJ_NETWORK"="OFF")
+sf_proj_network(FALSE)
+c(st_distance(b_pump_sf_ll, b_pump_sf1_ll), st_distance(b_pump_sf_ll, b_pump_sf_llgd), st_distance(b_pump_sf_ll, b_pump_sf_llgdsp))
+```
+
+Once again, the distance between the point transformed from the **sf** object as read from file and the point with the degraded coordinate reference system emulating the effect of the change in behaviour of GDAL's `exportToProj4()` in GDAL 6 and later is about 125m. Using the CDN shifts the output point by 1.7m, here using both the new **s2** and legacy interfaces for measurements in **sf** using geographical coordinates [@s2-package]:
+
+```{r, echo = TRUE, eval=TRUE} 
+sf_use_s2(TRUE)
+c(st_distance(b_pump_sf_ll, b_pump_sf1_ll), st_distance(b_pump_sf_ll, b_pump_sf_llgd), st_distance(b_pump_sf_ll, b_pump_sf_llgdsp))
+sf_use_s2(FALSE)
+```
+
+To be sure that **sf** uses the CDN, it appears that you need to set `Sys.setenv("PROJ_NETWORK"="ON")` before **sf** is loaded and attached. This does not apply to **rgdal**, but possibly reflects the fact that **rgdal** uses PROJ directly, while `sf::st_transform()` uses PROJ through GDAL (and `sf::sf_proj_pipelines()` uses PROJ directly).
+
+### CRS representation: status
+
+- Although it appears that most of the consequences of the change in representation of coordinate reference systems from Proj4 to WKT2 strings have now been addressed, we still see signs on the mailing list and on Twitter that users, naturally directing their attention to their analytical or visualization work, may still be confused. 
+
+- The extent of the spatial cluster of R packages is so great that it will undoubtedly take time before the dust settles. 
+
+- However, we trust that the operation of upgrading representations is now largely complete. 
+
+- Multiple warnings issued in **sp** workflows, now noisily drawing attention to possible degradations in workflows, will by default be muted when **sp** 1.5 and **rgdal** 1.6 are released.
+
+# Real plane vs. surface of sphere: going global
+
+### **sf** from version 1.0-0 uses **s2** by default
+
+https://s2geometry.io/devguide/s2cell_hierarchy
+
+https://dev.to/phm200/series/4694
+
+https://r-spatial.org/r/2020/06/17/s2.html
+
+https://r-spatial.github.io/sf/articles/sf7.html
+
+https://keen-swartz-3146c4.netlify.app/spherical.html
+
+
+# Mapping spatial data
+
+Reading the saved `"sf"` object, we can see that we have 71,353 observations, as in the article we are replicating:
+
+```{r, eval=TRUE}
+df_tracts <- st_read("df_tracts.gpkg")
+```
+
+Visualising that many objects is possible, but reducing the area of interest to the Chicago Metropolitan Area, as the source article does, makes plotting quicker:
+
+```{r, eval=TRUE}
+chicago_MA <- read.table("Chicago_MA.txt", colClasses=c("character", "character"))
+chicago_MA_tracts <- !is.na(match(substring(df_tracts$GEOID, 1, 5), chicago_MA$V2))
+sum(chicago_MA_tracts)
+```
+
+We'll use the **tmap** package with class interval styles from the **classInt** package:
+
+```{r, eval=TRUE}
+library(tmap)
+tm_shape(df_tracts[chicago_MA_tracts,]) + tm_fill("med_inc_cv", style="fisher", n=7, title="Coefficient of Variation")
+```
+
+In ESRI documentation, CV thresholds of 12 and 40 percent are proposed for the transformed reported MOE values:  https://doc.arcgis.com/en/esri-demographics/data/acs.htm. We'll create a classified variable (ordered factor):
+
+```{r, eval=TRUE}
+df_tracts$mi_cv_esri <- cut(df_tracts$med_inc_cv, c(0, 0.12, 0.40, Inf), labels=c("High", "Medium", "Low"), right=TRUE, include.lowest=TRUE, ordered_result=TRUE)
+table(df_tracts$mi_cv_esri)
+```
+
+and map it:
+
+```{r, eval=TRUE}
+tm_shape(df_tracts[chicago_MA_tracts,]) + tm_fill("mi_cv_esri", title="Reliability")
+```
+
+As the Low reliability tracts are small in size, the `"view"` mode for interactive mapping may help:
+
+```{r, eval=TRUE}
+tmap_mode("view")
+tm_shape(df_tracts[chicago_MA_tracts,]) + tm_fill("mi_cv_esri", title="Reliability")
+tmap_mode("plot")
+```
+
+Or equivalently using **mapview**, plotting the CV values rather than the ordered factor, which is not yet well-supported:
+
+```{r, eval=FALSE}
+library(mapview)
+mapviewOptions(fgb = FALSE)
+mapview(df_tracts[chicago_MA_tracts,"med_inc_cv"], layer.name="Coefficient of Variation")
+```
+
+
+## Class intervals
+
+**classInt** provides the key class interval determination for thematic mapping of continuous variables. The `classIntervals()` function takes a numeric vector (now also of classes POSIXt or units), a target number of intervals, and a style of class interval. Other arguments control the closure and precision of the intervals found.
+
+```{r, echo=TRUE}
+library(classInt)
+args(classIntervals)
+```
+Lapa et al. [-@LAPA2001] (Leprosy surveillance in Olinda, Brazil, using spatial analysis techniques) made available the underlying data set of Olinda census tracts (setor) in the Corrego Alegre 1970-72 / UTM zone 25S projection (EPSG:22525). Marilia Sá Carvalho and I wrote a [tutorial](https://rsbivand.github.io/geomed19-workshop/olinda.pdf) in 2003/4 based on this data set; there is more information in the tutorial.
+
+We'll find 7 intervals using Fisher natural breaks for the deprivation variable:
+
+```{r, echo=TRUE}
+library(sf)
+olinda_sirgas2000 <- st_read("olinda_sirgas2000.gpkg")
+(cI <- classIntervals(olinda_sirgas2000$DEPRIV, n=7, style="fisher"))
+```
+
+```{r, echo = TRUE, eval=TRUE} 
+Sys.setenv("PROJ_NETWORK"="OFF")
+sf_proj_network()
+list.files(sf_proj_search_paths()[1])
+sf_extSoftVersion()
+```
+
+We also need to assign a palette of graphical values, most often colours, to use to fill the intervals, and can inspect the intervals and fill colours with a plot method:
+
+The **RColorBrewer** package gives by permission access to the ColorBrewer palettes accesible from the [ColorBrewer](http://colorbrewer2.org)
+website. Note that ColorBrewer limits the number of classes tightly, only 3--9 sequential classes
+
+
+```{r, echo=TRUE}
+library(RColorBrewer)
+pal <- RColorBrewer::brewer.pal((length(cI$brks)-1), "Reds")
+plot(cI, pal)
+```
+
+We can also display all the ColorBrewer palettes:
+
+```{r, echo=TRUE}
+display.brewer.all()
+```
+
+Try exploring alternative class interval definitions and palettes, maybe also visiting http://hclwizard.org/ and its `hclwizard()` Shiny app, returning a palette generating function on clicking the "Return to R" button:
+
+```{r, echo=TRUE}
+library(colorspace)
+hcl_palettes("sequential (single-hue)", n = 7, plot = TRUE)
+```
+
+```{r, echo=TRUE, eval=FALSE}
+pal <- hclwizard()
+pal(6)
+```
+
+The end of rainbow discussion is informative:
+
+```{r, echo=TRUE}
+wheel <- function(col, radius = 1, ...)
+  pie(rep(1, length(col)), col = col, radius = radius, ...) 
+opar <- par(mfrow=c(1,2))
+wheel(rainbow_hcl(12))
+wheel(rainbow(12))
+par(opar)
+```
+
+See recent [R blog](https://developer.r-project.org/Blog/public/2019/11/21/a-new-palette-for-r/index.html).
+
+See also treatments in [Fundamentals of Data Visualization](https://serialmentor.com/dataviz/).
+
+
+## Thematic mapping
+
+The **sp** package provided base graphics plot and image methods. **sf** provides plot methods using base graphics; the method for `"sf"` objects re-arranges the plot window to provide a colour key, so extra steps are needed if overplotting is needed:
+
+```{r, echo=TRUE}
+plot(olinda_sirgas2000[,"DEPRIV"], breaks=cI$brks, pal=pal)
+```
+
+(returns current `par()` settings); the method also supports direct use of **classInt**:
+
+```{r, echo=TRUE}
+plot(olinda_sirgas2000[,"DEPRIV"], nbreaks=7, breaks="fisher", pal=pal)
+```
+
+Earlier we used the plot method for `"sfc"` objects which does not manipulate the graphics device, and is easier for overplotting.
+
+
+### The tmap package
+
+**tmap**: Thematic maps show spatial distributions. The theme refers to the phenomena that is shown, which is often demographical, social, cultural, or economic. The best known thematic map type is the choropleth, in which regions are colored according to the distribution of a data variable. The R package tmap offers a coherent plotting system for thematic maps that is based on the layered grammar of graphics. Thematic maps are created by stacking layers, where per layer, data can be mapped to one or more aesthetics. It is also possible to generate small multiples. Thematic maps can be further embellished by configuring the map layout and by adding map attributes, such as a scale bar and a compass. Besides plotting thematic maps on the graphics device, they can also be made interactive as an HTML widget. In addition, the R package **tmaptools** contains several convenient functions for reading and processing spatial data. See  [@JSSv084i06] and Chapter 8 in [@geocompr].
+
+The **tmap** package provides cartographically informed, grammar of graphics (gg) based functionality now, like **ggplot2** using **grid** graphics. John McIntosh tried with [ggplot2](http://johnmackintosh.com/2017-08-22-simply-mapping/), with quite nice results. I suggested he look at **tmap**, and things got [better](http://johnmackintosh.com/2017-09-01-easy-maps-with-tmap/), because **tmap** can switch between interactive and static viewing. **tmap** also provides direct access to **classInt** class intervals. 
+
+```{r, echo=TRUE}
+library(tmap)
+tmap_mode("plot")
+o <- tm_shape(olinda_sirgas2000) + tm_fill("DEPRIV", style="fisher", n=7, palette="Reds")
+class(o)
+```
+
+returns a `"tmap"` object, a **grid** GROB (graphics object), with print methods.
+
+```{r, echo=TRUE}
+o
+```
+
+Since the objects are GROBs, they can be updated, as in **lattice** with **latticeExtra** or **ggplot2**:
+
+```{r, echo=TRUE}
+o + tm_borders(alpha=0.5, lwd=0.5)
+```
+
+
+There is also a Shiny tool for exploring palettes:
+
+```{r, echo=TRUE, eval=FALSE}
+tmaptools::palette_explorer()
+```
+
+### The mapsf, formerly cartography package
+
+**cartography** helped to design cartographic representations such as proportional symbols, choropleth, typology, flows or discontinuities maps. It also offers several features that improve the graphic presentation of maps, for instance, map palettes, layout elements (scale, north arrow, title...), labels or legends. [@giraud+lambert16; @giraud+lambert17], http://riatelab.github.io/cartography/vignettes/cheatsheet/cartography_cheatsheet.pdf. The package is associated with **rosm**: Download and plot Open Street Map <http://www.openstreetmap.org/>, Bing Maps <http://www.bing.com/maps> and other tiled map sources. Use to create basemaps quickly and add hillshade to vector-based maps. https://cran.r-project.org/web/packages/rosm/vignettes/rosm.html. **mapsf** has followed up on suggestions to improve **cartography**, using recent changes in base R colour handling: https://developer.r-project.org/Blog/public/2019/11/21/a-new-palette-for-r/index.html.
+
+The package organizes extra palettes:
+
+```{r, echo=TRUE}
+library(mapsf)
+cols <- mf_get_pal(n = c(5, 5), pal = c("Reds 2", "Greens"))
+plot(1:10, rep(1, 10), bg = cols, pch = 22, cex = 4, axes=FALSE, ann=FALSE)
+```
+
+The plotting functions (not methods) use base graphics:
+
+```{r, echo=TRUE}
+mf_choro(olinda_sirgas2000, var="DEPRIV", breaks="fisher", nbreaks=7, pal=pal, leg_val_rnd=3)
+```
+
+(returns NULL)
+
+### The ggplot2 package
+
+The **ggplot2** package provides the `geom_sf()` facility for mapping:
+
+```{r, echo=TRUE}
+library(ggplot2)
+```
+
+```{r, echo=TRUE}
+g <- ggplot(olinda_sirgas2000) + geom_sf(aes(fill=DEPRIV))
+g
+```
+
+It is possible to set a theme that drops the arguably unnecessary graticule:
+
+```{r, echo=TRUE}
+g + theme_void()
+```
+
+
+```{r, echo=TRUE}
+g + theme_void() + scale_fill_distiller(palette="Reds", direction=1)
+```
+
+but there is a lot of jumping through hoops to get a simple map. To get proper class intervals involves even more work, because **ggplot2** takes specific, not general, positions on how graphics are observed. ColorBrewer eschews continuous colour scales based on cognitive research, but ggplot2 enforces them for continuous variables (similarly for graticules, which may make sense for data plots but not for maps).
+
+
+## Interactive maps
+
+### **tmap** modes
+
+Using `tmap_mode()`, we can switch between presentation (`"plot"`) and interactive (`"view"`) plotting:
+
+```{r, echo=TRUE}
+tmap_mode("view")
+```
+
+```{r, echo=TRUE}
+o + tm_borders(alpha=0.5, lwd=0.5)
+```
+
+
+```{r, echo=TRUE}
+tmap_mode("plot")
+```
+
+
+### The **mapview** package
+
+**mapview**: Quickly and conveniently create interactive visualisations of spatial data with or without background maps. Attributes of displayed features are fully queryable via pop-up windows. Additional functionality includes methods to visualise true- and false-color raster images, bounding boxes, small multiples and 3D raster data cubes. It uses **leaflet** and other HTML packages.
+
+```{r, echo=TRUE}
+library(mapview)
+if (sf:::CPL_gdal_version() >= "3.1.0") mapviewOptions(fgb = FALSE)
+mapview(olinda_sirgas2000, zcol="DEPRIV", col.regions=pal, at=cI$brks)
+```
+
+## Further examples
+
+```{r, echo=TRUE}
+data("pol_pres15", package = "spDataLarge")
+pol_pres15 <- st_buffer(pol_pres15, dist=0)
+```
+
+
+```{r, echo=TRUE}
+library(tmap)
+o <- tm_shape(pol_pres15) + tm_facets(free.scales=FALSE) + tm_borders(lwd=0.5, alpha=0.4) + tm_layout(panel.labels=c("Duda", "Komorowski"))
+```
+
+```{r, echo=TRUE, cache=TRUE}
+o + tm_fill(c("I_Duda_share", "I_Komorowski_share"), n=6, style="pretty", title="I round\nshare of votes")
+```
+
+
+```{r, echo=TRUE, cache=TRUE}
+o + tm_fill(c("II_Duda_share", "II_Komorowski_share"), n=6, style="pretty", title="II round\nshare of votes")
+```
+
+
+### R's `sessionInfo()`
+
+```{r sI, echo = TRUE}
+sessionInfo()
+```
