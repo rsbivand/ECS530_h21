@@ -1,5 +1,5 @@
 ---
-title: "Spatial data analysis I"
+title: "ECS530: Spatial data analysis I"
 author: "Roger Bivand"
 date: "Monday 15 November 2021"
 output: 
