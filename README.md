@@ -1,9 +1,9 @@
 # ECS530 November 2021
 NHH ECS530 2021 course: Spatial data analysis (with R)
 
-15/11 Monday OK
+15/11 Monday  OK
 
-16/11 Tuesday OK
+16/11 Tuesday  OK
 
 17/11 Wednesday OK
 
